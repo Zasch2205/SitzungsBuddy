@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate planning docs
+        run: |
+          test -f docs/PRODUCT_MVP.md
+          test -f docs/ARCHITECTURE_DECISIONS.md
+          test -f docs/SECURITY_BASELINE.md
+          test -f docs/UX_SPEC.md
+          test -f docs/AGENT_PLAYBOOK.md
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+

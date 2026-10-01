@@ -1,0 +1,27 @@
+name: Bug
+description: Fehlerbericht für Sitzungsbuddy
+title: "fix: "
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartetes Verhalten
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Tatsächliches Verhalten
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduktion
+      description: Schritte zum Reproduzieren
+    validations:
+      required: true
+

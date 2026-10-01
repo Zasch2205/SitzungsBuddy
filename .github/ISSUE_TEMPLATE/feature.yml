@@ -1,0 +1,21 @@
+name: Feature
+description: Neue Funktion für Sitzungsbuddy
+title: "feat: "
+labels: ["type:feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem/Nutzen
+      description: Welches Nutzerproblem wird gelöst?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Akzeptanzkriterien
+      description: Wann gilt das Feature als fertig?
+    validations:
+      required: true
+
