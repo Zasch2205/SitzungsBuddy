@@ -36,6 +36,8 @@ Für Desktop-Entwicklung mit Tauri (nach Rust-Installation):
 npm run tauri dev
 ```
 
+Hinweis: `tauri dev` räumt Port `1420` automatisch frei.
+
 ## Projekt-Dokumentation
 
 - `docs/AGENT_PLAYBOOK.md`
