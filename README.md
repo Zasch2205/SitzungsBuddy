@@ -44,3 +44,4 @@ npm run tauri dev
 - `docs/SECURITY_BASELINE.md`
 - `docs/UX_SPEC.md`
 - `docs/GITHUB_SETUP.md`
+- `docs/BRANCH_PROTECTION.md`
