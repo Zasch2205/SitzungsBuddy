@@ -376,13 +376,19 @@ function App() {
     <main className="appShell">
       <header className="freezeHeader">
         <div className="headerTopRow">
-          <button
-            type="button"
-            className={onAir ? "onAirButton active" : "onAirButton"}
-            onClick={startOnAir}
-          >
-            {onAir ? "On\nAir" : "On\nAir"}
-          </button>
+          <div className="leftHeaderStack">
+            <div className="logoTile" aria-label="Sitzungsbuddy Logo">
+              <p className="logoText">Sitzungsbuddy</p>
+              <p className="logoEmoji">👥</p>
+            </div>
+            <button
+              type="button"
+              className={onAir ? "onAirButton active" : "onAirButton"}
+              onClick={startOnAir}
+            >
+              {onAir ? "On\nAir" : "On\nAir"}
+            </button>
+          </div>
 
           <div className="titleArea">
             <h1>135. PTKO</h1>
@@ -420,11 +426,21 @@ function App() {
           <aside className="actionColumn">
             <button
               type="button"
-              className="actionButton"
+              className="iconButton"
+              aria-label="Einstellungen"
+              title="Einstellungen"
+            >
+              ⚙
+            </button>
+            <button
+              type="button"
+              className="iconButton primary"
               onClick={advanceToNextItem}
               disabled={!onAir || nextPlannedIndex < 0}
+              aria-label="Nächster TOP"
+              title="Nächster TOP"
             >
-              Weiter
+              ↪
             </button>
             <p className="spaceHint">Leertaste = Nächster TOP</p>
           </aside>
