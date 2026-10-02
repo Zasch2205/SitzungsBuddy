@@ -55,28 +55,16 @@ p {
 }
 
 .logoTile {
-  width: 8rem;
-  height: 8rem;
+  width: 8.3rem;
   border-radius: 0.35rem;
-  border: 2px solid #648a6a;
-  background: linear-gradient(155deg, #6ad66e 0%, #53bf62 100%);
   box-shadow: 0 10px 20px rgb(0 0 0 / 18%);
-  display: grid;
-  place-items: center;
-  padding: 0.45rem;
-  text-align: center;
+  overflow: hidden;
 }
 
-.logoText {
-  font-size: 1.05rem;
-  font-weight: 800;
-  color: #fff;
-  text-shadow: 0 2px 4px rgb(0 0 0 / 28%);
-}
-
-.logoEmoji {
-  font-size: 2.1rem;
-  line-height: 1;
+.logoImage {
+  width: 100%;
+  height: auto;
+  display: block;
 }
 
 .onAirButton {
@@ -166,6 +154,7 @@ p {
 
 .topBox {
   background: #a8ffad;
+  color: #0f4d84;
   font-size: clamp(1.45rem, 2.5vw, 2.4rem);
   justify-content: flex-start;
   padding-inline: 1.1rem;
@@ -364,6 +353,73 @@ p {
   width: auto;
   padding: 0 0.8rem;
   font-size: 1.45rem;
+}
+
+.settingsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgb(6 17 30 / 42%);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.settingsModal {
+  width: min(32rem, 100%);
+  border: 3px solid #0f1d2d;
+  border-radius: 0.9rem;
+  background: #fff;
+  box-shadow: 0 20px 40px rgb(0 0 0 / 28%);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.settingsModal h3 {
+  font-size: 1.45rem;
+}
+
+.settingsField {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.settingsInput {
+  border: 2px solid #9bb1c8;
+  border-radius: 0.55rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 1rem;
+}
+
+.settingsInput:focus {
+  outline: 3px solid rgb(15 77 132 / 28%);
+  border-color: #0f4d84;
+}
+
+.settingsActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+}
+
+.settingsButton {
+  border: 2px solid #0f4d84;
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+  background: #0f4d84;
+  cursor: pointer;
+}
+
+.settingsButton.ghost {
+  color: #163350;
+  background: #e6eef8;
+  border-color: #9cb6d3;
 }
 
 @media (max-width: 1400px) {

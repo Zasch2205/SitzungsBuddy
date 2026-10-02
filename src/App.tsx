@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
 import "./App.css";
 
 type AgendaState = "planned" | "live" | "hold" | "done" | "skipped";
@@ -96,6 +97,13 @@ function stateLabel(state: AgendaState): string {
   }
 }
 
+function buildDefaultMeetingDateLabel(nowMs: number): string {
+  return new Date(nowMs).toLocaleDateString("de-DE", {
+    day: "2-digit",
+    month: "long",
+  });
+}
+
 function App() {
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
@@ -103,6 +111,13 @@ function App() {
   const [currentItemId, setCurrentItemId] = useState<string | null>(null);
   const [currentItemStartedAt, setCurrentItemStartedAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+  const [meetingTitle, setMeetingTitle] = useState("135. PTKO");
+  const [meetingDate, setMeetingDate] = useState(() => buildDefaultMeetingDateLabel(Date.now()));
+  const [meetingLocation, setMeetingLocation] = useState("Hamburg");
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTitleDraft, setSettingsTitleDraft] = useState(meetingTitle);
+  const [settingsDateDraft, setSettingsDateDraft] = useState(meetingDate);
+  const [settingsLocationDraft, setSettingsLocationDraft] = useState(meetingLocation);
 
   const currentIndex = useMemo(
     () => agenda.findIndex((item) => item.id === currentItemId),
@@ -214,6 +229,36 @@ function App() {
     setCurrentItemStartedAt(timestamp);
   }, [agenda, currentItemId, onAir, sessionStartedAt]);
 
+  const openSettings = useCallback(() => {
+    setSettingsTitleDraft(meetingTitle);
+    setSettingsDateDraft(meetingDate);
+    setSettingsLocationDraft(meetingLocation);
+    setIsSettingsOpen(true);
+  }, [meetingDate, meetingLocation, meetingTitle]);
+
+  const closeSettings = useCallback(() => {
+    setIsSettingsOpen(false);
+  }, []);
+
+  const saveSettings = useCallback(() => {
+    setMeetingTitle((previous) => {
+      const cleaned = settingsTitleDraft.trim();
+      return cleaned.length > 0 ? cleaned : previous;
+    });
+
+    setMeetingDate((previous) => {
+      const cleaned = settingsDateDraft.trim();
+      return cleaned.length > 0 ? cleaned : previous;
+    });
+
+    setMeetingLocation((previous) => {
+      const cleaned = settingsLocationDraft.trim();
+      return cleaned.length > 0 ? cleaned : previous;
+    });
+
+    setIsSettingsOpen(false);
+  }, [settingsDateDraft, settingsLocationDraft, settingsTitleDraft]);
+
   const moveFutureItem = useCallback(
     (index: number, direction: -1 | 1) => {
       setAgenda((previous) => {
@@ -300,16 +345,23 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [advanceToNextItem]);
 
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsSettingsOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isSettingsOpen]);
+
   const currentClockLabel = useMemo(() => {
     return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
-  }, [nowMs]);
-
-  const currentDateLabel = useMemo(() => {
-    return new Date(nowMs).toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "long",
-      year: "numeric",
-    });
   }, [nowMs]);
 
   const currentTopLabel = currentItem
@@ -378,8 +430,7 @@ function App() {
         <div className="headerTopRow">
           <div className="leftHeaderStack">
             <div className="logoTile" aria-label="Sitzungsbuddy Logo">
-              <p className="logoText">Sitzungsbuddy</p>
-              <p className="logoEmoji">👥</p>
+              <img src={logoOriginal} alt="Sitzungsbuddy Logo" className="logoImage" />
             </div>
             <button
               type="button"
@@ -391,12 +442,12 @@ function App() {
           </div>
 
           <div className="titleArea">
-            <h1>135. PTKO</h1>
+            <h1>{meetingTitle}</h1>
           </div>
 
           <div className="dateArea">
-            <p>{currentDateLabel}</p>
-            <strong>Hamburg</strong>
+            <p>{meetingDate}</p>
+            <strong>{meetingLocation}</strong>
           </div>
         </div>
 
@@ -429,6 +480,7 @@ function App() {
               className="iconButton"
               aria-label="Einstellungen"
               title="Einstellungen"
+              onClick={openSettings}
             >
               ⚙
             </button>
@@ -501,6 +553,62 @@ function App() {
           </ul>
         </article>
       </section>
+
+      {isSettingsOpen ? (
+        <div className="settingsOverlay" onClick={closeSettings}>
+          <section
+            className="settingsModal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sitzungseinstellungen"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Einstellungen</h3>
+
+            <label className="settingsField" htmlFor="meeting-title-input">
+              Titel der Sitzung
+            </label>
+            <input
+              id="meeting-title-input"
+              className="settingsInput"
+              value={settingsTitleDraft}
+              onChange={(event) => setSettingsTitleDraft(event.currentTarget.value)}
+              placeholder="z. B. 135. PTKO"
+            />
+
+            <label className="settingsField" htmlFor="meeting-date-input">
+              Datum
+            </label>
+            <input
+              id="meeting-date-input"
+              className="settingsInput"
+              value={settingsDateDraft}
+              onChange={(event) => setSettingsDateDraft(event.currentTarget.value)}
+              placeholder="z. B. 01. Oktober"
+            />
+
+            <label className="settingsField" htmlFor="meeting-location-input">
+              Ort
+            </label>
+            <input
+              id="meeting-location-input"
+              className="settingsInput"
+              value={settingsLocationDraft}
+              onChange={(event) => setSettingsLocationDraft(event.currentTarget.value)}
+              placeholder="z. B. Hamburg"
+            />
+
+            <div className="settingsActions">
+              <button type="button" className="settingsButton ghost" onClick={closeSettings}>
+                Abbrechen
+              </button>
+              <button type="button" className="settingsButton" onClick={saveSettings}>
+                Speichern
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
