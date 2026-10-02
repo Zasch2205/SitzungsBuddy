@@ -18,7 +18,7 @@ const initialAgenda: AgendaItem[] = [
     id: "d1-1",
     day: "Tag 1",
     order: 1,
-    top: "TOP 1",
+    top: "1",
     title: "Begrüßung und Zielsetzung",
     plannedDurationSec: 15 * 60,
     state: "planned",
@@ -27,7 +27,7 @@ const initialAgenda: AgendaItem[] = [
     id: "d1-2",
     day: "Tag 1",
     order: 2,
-    top: "TOP 2",
+    top: "2",
     title: "Statusberichte der Fachbereiche",
     plannedDurationSec: 45 * 60,
     state: "planned",
@@ -36,7 +36,7 @@ const initialAgenda: AgendaItem[] = [
     id: "d1-3",
     day: "Tag 1",
     order: 3,
-    top: "TOP 3",
+    top: "3",
     title: "Entscheidung Budget 2027",
     plannedDurationSec: 30 * 60,
     state: "planned",
@@ -45,7 +45,7 @@ const initialAgenda: AgendaItem[] = [
     id: "d2-1",
     day: "Tag 2",
     order: 4,
-    top: "TOP 4",
+    top: "4",
     title: "Roadmap-Planung",
     plannedDurationSec: 60 * 60,
     state: "planned",
@@ -66,12 +66,17 @@ function formatClock(seconds: number): string {
   return [hours, minutes, secs].map((part) => part.toString().padStart(2, "0")).join(":");
 }
 
-function formatSigned(seconds: number): string {
-  if (seconds >= 0) {
-    return formatClock(seconds);
+function formatCompact(seconds: number): string {
+  const absSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(absSeconds / 3600);
+  const minutes = Math.floor((absSeconds % 3600) / 60);
+  const secs = absSeconds % 60;
+
+  if (hours > 0) {
+    return [hours, minutes, secs].map((part) => part.toString().padStart(2, "0")).join(":");
   }
 
-  return `+${formatClock(Math.abs(seconds))}`;
+  return [minutes, secs].map((part) => part.toString().padStart(2, "0")).join(":");
 }
 
 function stateLabel(state: AgendaState): string {
@@ -124,6 +129,22 @@ function App() {
 
   const remainingSec = currentItem ? currentItem.plannedDurationSec - currentElapsedSec : 0;
 
+  const plannedElapsedSec = useMemo(() => {
+    return agenda.reduce((sum, item) => {
+      if (item.state === "done") {
+        return sum + item.plannedDurationSec;
+      }
+
+      if (item.state === "live" && item.id === currentItemId) {
+        return sum + Math.min(currentElapsedSec, item.plannedDurationSec);
+      }
+
+      return sum;
+    }, 0);
+  }, [agenda, currentElapsedSec, currentItemId]);
+
+  const prognosisSec = totalElapsedSec - plannedElapsedSec;
+
   const nextPlannedIndex = useMemo(
     () => agenda.findIndex((item) => item.state === "planned"),
     [agenda],
@@ -163,6 +184,10 @@ function App() {
   }, [agenda, currentItemId, onAir]);
 
   const startOnAir = useCallback(() => {
+    if (onAir) {
+      return;
+    }
+
     const timestamp = Date.now();
     setOnAir(true);
     setNowMs(timestamp);
@@ -187,11 +212,7 @@ function App() {
     );
     setCurrentItemId(firstPlanned.id);
     setCurrentItemStartedAt(timestamp);
-  }, [agenda, currentItemId, sessionStartedAt]);
-
-  const stopOnAir = useCallback(() => {
-    setOnAir(false);
-  }, []);
+  }, [agenda, currentItemId, onAir, sessionStartedAt]);
 
   const moveFutureItem = useCallback(
     (index: number, direction: -1 | 1) => {
@@ -253,16 +274,12 @@ function App() {
   );
 
   useEffect(() => {
-    if (!onAir && sessionStartedAt === null) {
-      return;
-    }
-
     const interval = window.setInterval(() => {
       setNowMs(Date.now());
     }, 250);
 
     return () => window.clearInterval(interval);
-  }, [onAir, sessionStartedAt]);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -283,52 +300,139 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [advanceToNextItem]);
 
+  const currentClockLabel = useMemo(() => {
+    return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
+  }, [nowMs]);
+
+  const currentDateLabel = useMemo(() => {
+    return new Date(nowMs).toLocaleDateString("de-DE", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+    });
+  }, [nowMs]);
+
+  const currentTopLabel = currentItem
+    ? `${currentItem.top} ${currentItem.title}`
+    : "Kein aktiver TOP";
+
+  const countdownLabel = useMemo(() => {
+    if (!currentItem) {
+      return "--:--";
+    }
+
+    if (remainingSec > 0) {
+      return `+ ${formatCompact(remainingSec)}`;
+    }
+
+    if (remainingSec < 0) {
+      return `- ${formatCompact(Math.abs(remainingSec))}`;
+    }
+
+    return "0";
+  }, [currentItem, remainingSec]);
+
+  const countdownClass = useMemo(() => {
+    if (!currentItem) {
+      return "deltaNeutral";
+    }
+
+    if (remainingSec > 0) {
+      return "deltaGreen";
+    }
+
+    if (remainingSec < 0) {
+      return "deltaRed";
+    }
+
+    return "deltaNeutral";
+  }, [currentItem, remainingSec]);
+
+  const prognosisLabel = useMemo(() => {
+    if (sessionStartedAt === null || prognosisSec === 0) {
+      return "0";
+    }
+
+    if (prognosisSec > 0) {
+      return `+ ${formatCompact(prognosisSec)}`;
+    }
+
+    return `- ${formatCompact(Math.abs(prognosisSec))}`;
+  }, [prognosisSec, sessionStartedAt]);
+
+  const prognosisClass = useMemo(() => {
+    if (sessionStartedAt === null || prognosisSec === 0) {
+      return "deltaNeutral";
+    }
+
+    if (prognosisSec > 0) {
+      return "deltaRed";
+    }
+
+    return "deltaGreen";
+  }, [prognosisSec, sessionStartedAt]);
+
   return (
-    <main className="layout">
-      <header className="topBar">
-        <div>
-          <p className="eyebrow">Sitzungsbuddy</p>
-          <h1>Operator Console</h1>
-          <p className="subline">Mehrtägige Agenda · OnAir-Steuerung · Beamer-ready</p>
+    <main className="appShell">
+      <header className="freezeHeader">
+        <div className="headerTopRow">
+          <button
+            type="button"
+            className={onAir ? "onAirButton active" : "onAirButton"}
+            onClick={startOnAir}
+          >
+            {onAir ? "On\nAir" : "On\nAir"}
+          </button>
+
+          <div className="titleArea">
+            <h1>135. PTKO</h1>
+          </div>
+
+          <div className="dateArea">
+            <p>{currentDateLabel}</p>
+            <strong>Hamburg</strong>
+          </div>
         </div>
-        <div className="onAirActions">
-          <button
-            type="button"
-            className={onAir ? "button ghost" : "button danger"}
-            onClick={onAir ? stopOnAir : startOnAir}
-          >
-            {onAir ? "OnAir stoppen" : "OnAir starten"}
-          </button>
-          <button
-            type="button"
-            className="button"
-            onClick={advanceToNextItem}
-            disabled={!onAir || nextPlannedIndex < 0}
-          >
-            Nächster Punkt (Space)
-          </button>
+
+        <div className="headerDivider" />
+
+        <div className="statusLayout">
+          <section className="statusColumn">
+            <p className="fieldLabel">Aktuelle Uhrzeit</p>
+            <div className="valueBox">{currentClockLabel}</div>
+
+            <p className="fieldLabel">Sitzungszeit</p>
+            <div className="valueBox">{formatClock(totalElapsedSec)}</div>
+
+            <p className={`deltaValue ${prognosisClass}`}>{prognosisLabel}</p>
+          </section>
+
+          <section className="statusColumn rightColumn">
+            <p className="fieldLabel">Aktueller TOP</p>
+            <div className="topBox">{currentTopLabel}</div>
+
+            <p className="fieldLabel">Zeit des TOP</p>
+            <div className="valueBox">{currentItem ? formatClock(currentElapsedSec) : "--:--:--"}</div>
+
+            <p className={`deltaValue ${countdownClass}`}>{countdownLabel}</p>
+          </section>
+
+          <aside className="actionColumn">
+            <button
+              type="button"
+              className="actionButton"
+              onClick={advanceToNextItem}
+              disabled={!onAir || nextPlannedIndex < 0}
+            >
+              Weiter
+            </button>
+            <p className="spaceHint">Leertaste = Nächster TOP</p>
+          </aside>
         </div>
       </header>
 
-      <section className="statusGrid">
-        <article className="statusCard">
-          <p>Live-Status</p>
-          <strong className={onAir ? "live" : "offAir"}>{onAir ? "ON AIR" : "OFF AIR"}</strong>
-        </article>
-        <article className="statusCard">
-          <p>Gesamtzeit seit OnAir</p>
-          <strong>{formatClock(totalElapsedSec)}</strong>
-        </article>
-        <article className="statusCard">
-          <p>Countdown aktueller TOP</p>
-          <strong className={remainingSec < 0 ? "overtime" : "countdown"}>
-            {currentItem ? formatSigned(remainingSec) : "--:--:--"}
-          </strong>
-        </article>
-      </section>
-
-      <section className="agendaArea">
-        <article className="panel">
+      <section className="agendaScrollArea">
+        <article className="agendaCard">
           <h2>Agenda</h2>
           <p className="hint">Zukünftige Punkte lassen sich umsortieren oder auf Halt setzen.</p>
           <ul className="agendaList">
@@ -345,7 +449,7 @@ function App() {
                     <span className={`badge state-${item.state}`}>{stateLabel(item.state)}</span>
                     <span className="order">#{item.order}</span>
                     <span className="day">{item.day}</span>
-                    <span className="top">{item.top}</span>
+                    <span className="top">TOP {item.top}</span>
                     <span className="title">{item.title}</span>
                   </div>
                   <div className="agendaActions">
@@ -379,16 +483,6 @@ function App() {
               );
             })}
           </ul>
-        </article>
-
-        <article className="panel beamerStub">
-          <h2>Beamer-Preview (MVP-Stub)</h2>
-          <p className="hint">In der nächsten Ausbaustufe als separates Fenster.</p>
-          <div className="beamerFrame">
-            <p className="beamerTop">{currentItem?.top ?? "Kein aktiver TOP"}</p>
-            <h3>{currentItem?.title ?? "Warten auf OnAir"}</h3>
-            <p className="beamerTimer">{currentItem ? formatSigned(remainingSec) : "--:--:--"}</p>
-          </div>
         </article>
       </section>
     </main>

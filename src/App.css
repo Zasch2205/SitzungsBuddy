@@ -12,23 +12,8 @@
 
 body {
   margin: 0;
-  background: #f2f4f8;
-  color: #1a2533;
-}
-
-.layout {
-  min-height: 100vh;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.topBar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 1rem;
+  color: #0f1d2d;
+  background: #8ef994;
 }
 
 h1,
@@ -38,115 +23,199 @@ p {
   margin: 0;
 }
 
-.eyebrow {
-  color: #4f6a8a;
-  font-weight: 700;
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.appShell {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: #8ef994;
 }
 
-h1 {
-  font-size: 1.4rem;
-  margin-top: 0.25rem;
+.freezeHeader {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 1.25rem 1.5rem 1rem;
+  background: #8ef994;
+  border-bottom: 3px solid #183045;
 }
 
-.subline {
-  margin-top: 0.3rem;
-  color: #5b6d82;
+.headerTopRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1.2rem;
 }
 
-.onAirActions {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.button {
-  border: none;
-  border-radius: 0.6rem;
-  padding: 0.6rem 0.9rem;
-  background: #22486e;
+.onAirButton {
+  width: 6.6rem;
+  height: 6.6rem;
+  border-radius: 1rem;
+  border: 3px solid #0f1d2d;
+  font-size: 2rem;
+  line-height: 0.95;
+  font-weight: 800;
+  white-space: pre-line;
   color: #fff;
-  font-weight: 600;
+  background: #c40e22;
+  box-shadow: 0 8px 18px rgb(0 0 0 / 18%);
   cursor: pointer;
 }
 
-.button:disabled,
-.mini:disabled {
+.onAirButton.active {
+  background: #e20f27;
+}
+
+.titleArea {
+  text-align: center;
+}
+
+.titleArea h1 {
+  font-size: clamp(2rem, 5vw, 4rem);
+  letter-spacing: 0.03em;
+}
+
+.dateArea {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 1.05rem;
+}
+
+.dateArea strong {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.headerDivider {
+  margin: 0.75rem 0 1.05rem;
+  border-bottom: 3px solid #183045;
+}
+
+.statusLayout {
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(330px, 1fr) auto;
+  align-items: start;
+  gap: 1.25rem;
+}
+
+.statusColumn {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+}
+
+.rightColumn {
+  justify-items: stretch;
+}
+
+.fieldLabel {
+  font-size: 1.95rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.valueBox,
+.topBox {
+  border: 3px solid #0f1d2d;
+  border-radius: 0.9rem;
+  background: #fff;
+  padding: 0.25rem 1rem;
+  font-size: clamp(1.7rem, 3.2vw, 3rem);
+  font-weight: 800;
+  text-align: center;
+  min-height: 4.15rem;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.topBox {
+  background: #a8ffad;
+  font-size: clamp(1.45rem, 2.5vw, 2.4rem);
+  justify-content: flex-start;
+  padding-inline: 1.1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.deltaValue {
+  margin-top: 0.2rem;
+  font-size: clamp(1.9rem, 3.2vw, 3rem);
+  font-weight: 900;
+  text-align: center;
+  min-height: 3.2rem;
+}
+
+.deltaGreen {
+  color: #1f7f2f;
+}
+
+.deltaRed {
+  color: #c2132a;
+}
+
+.deltaNeutral {
+  color: #173049;
+}
+
+.actionColumn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding-top: 1.9rem;
+}
+
+.actionButton {
+  border: 3px solid #0f1d2d;
+  background: #0f4d84;
+  color: #fff;
+  border-radius: 0.8rem;
+  min-width: 8.3rem;
+  min-height: 4.2rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.actionButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.button.ghost {
-  background: #4e7aa5;
+.spaceHint {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1b334d;
 }
 
-.button.danger {
-  background: #b62044;
+.agendaScrollArea {
+  min-height: 0;
+  overflow: auto;
+  padding: 1.2rem 1.5rem 1.6rem;
 }
 
-.statusGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
-  gap: 0.75rem;
-}
-
-.statusCard {
+.agendaCard {
   background: #fff;
-  border-radius: 0.8rem;
-  padding: 0.9rem;
-  box-shadow: 0 1px 4px rgb(10 20 30 / 12%);
+  border-radius: 1.1rem;
+  box-shadow: 0 4px 14px rgb(13 28 46 / 14%);
+  padding: 1.2rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.5rem;
 }
 
-.statusCard p {
-  color: #5f7286;
-  font-size: 0.85rem;
-}
-
-.statusCard strong {
-  font-size: 1.25rem;
-}
-
-.live {
-  color: #0a7d3a;
-}
-
-.offAir {
-  color: #8a2e43;
-}
-
-.countdown {
-  color: #113f88;
-}
-
-.overtime {
-  color: #9f1f34;
-}
-
-.agendaArea {
-  display: grid;
-  grid-template-columns: minmax(360px, 2fr) minmax(280px, 1fr);
-  gap: 0.9rem;
-}
-
-.panel {
-  background: #fff;
-  border-radius: 0.8rem;
-  box-shadow: 0 1px 4px rgb(10 20 30 / 12%);
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
+.agendaCard h2 {
+  font-size: 3rem;
 }
 
 .hint {
-  color: #637589;
-  font-size: 0.85rem;
+  font-size: 2rem;
+  color: #59708a;
 }
 
 .agendaList {
@@ -155,13 +224,13 @@ h1 {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .agendaItem {
-  border: 1px solid #d2dce7;
-  border-radius: 0.6rem;
-  padding: 0.55rem 0.6rem;
+  border: 2px solid #c8dcf5;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.65rem;
   display: flex;
   justify-content: space-between;
   gap: 0.6rem;
@@ -169,13 +238,13 @@ h1 {
 }
 
 .agendaItem.current {
-  border-color: #22486e;
-  box-shadow: inset 0 0 0 1px #22486e;
+  border-color: #0f4d84;
+  box-shadow: inset 0 0 0 1px #0f4d84;
 }
 
 .agendaMeta {
   display: flex;
-  gap: 0.4rem;
+  gap: 0.45rem;
   align-items: center;
   flex-wrap: wrap;
 }
@@ -183,8 +252,8 @@ h1 {
 .badge {
   border-radius: 999px;
   padding: 0.15rem 0.5rem;
-  font-size: 0.72rem;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .state-planned {
@@ -216,95 +285,103 @@ h1 {
 .day,
 .top {
   color: #4f6076;
-  font-size: 0.82rem;
+  font-size: 1.25rem;
 }
 
 .title {
-  font-weight: 600;
+  font-size: 1.85rem;
+  font-weight: 700;
 }
 
 .agendaActions {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
 }
 
 .duration {
   color: #506178;
-  font-size: 0.82rem;
-  width: 4.7rem;
+  font-size: 1.75rem;
+  width: 6rem;
   text-align: right;
 }
 
 .mini {
   border: none;
   border-radius: 0.45rem;
-  background: #2d5f8d;
-  color: white;
-  font-weight: 600;
-  width: 2rem;
-  height: 2rem;
+  background: #1d5c97;
+  color: #fff;
+  font-size: 1.45rem;
+  font-weight: 700;
+  width: 2.8rem;
+  height: 2.8rem;
   cursor: pointer;
+}
+
+.mini:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .mini.wide {
   width: auto;
-  padding: 0 0.6rem;
+  padding: 0 0.8rem;
+  font-size: 1.45rem;
 }
 
-.beamerStub {
-  align-self: flex-start;
+@media (max-width: 1400px) {
+  .fieldLabel {
+    font-size: 1.25rem;
+  }
+
+  .agendaCard h2 {
+    font-size: 2.1rem;
+  }
+
+  .hint {
+    font-size: 1.2rem;
+  }
+
+  .order,
+  .day,
+  .top {
+    font-size: 0.95rem;
+  }
+
+  .title {
+    font-size: 1.35rem;
+  }
+
+  .duration {
+    font-size: 1.2rem;
+  }
 }
 
-.beamerFrame {
-  background: #141a21;
-  color: #fff;
-  border-radius: 0.7rem;
-  padding: 1rem;
-  min-height: 12rem;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.6rem;
-  text-align: center;
-}
+@media (max-width: 1040px) {
+  .appShell {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
 
-.beamerTop {
-  color: #aac6f0;
-  text-transform: uppercase;
-  font-size: 0.8rem;
-  letter-spacing: 0.05em;
-}
+  .headerTopRow {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
 
-.beamerFrame h3 {
-  margin: 0;
-  font-size: 1.2rem;
-}
+  .dateArea {
+    align-items: center;
+    text-align: center;
+  }
 
-.beamerTimer {
-  font-size: 1.9rem;
-  font-weight: 700;
-}
-
-@media (max-width: 1100px) {
-  .statusGrid {
+  .statusLayout {
     grid-template-columns: 1fr;
   }
 
-  .agendaArea {
-    grid-template-columns: 1fr;
+  .actionColumn {
+    align-items: center;
+    padding-top: 0;
   }
 
-  .topBar {
-    flex-direction: column;
-  }
-
-  .onAirActions {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 700px) {
   .agendaItem {
     flex-direction: column;
     align-items: flex-start;
