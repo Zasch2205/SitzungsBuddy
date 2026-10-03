@@ -24,6 +24,7 @@ type AsRunEntry = {
   startedAtLabel: string;
   plannedLabel: string;
   actualLabel: string;
+  isLive: boolean;
 };
 
 const initialAgenda: AgendaItem[] = [
@@ -194,6 +195,7 @@ function App() {
           startedAtLabel: formatTimeOfDay(startedAtMs),
           plannedLabel: formatClock(item.plannedDurationSec),
           actualLabel: formatClock(actualSec),
+          isLive: item.state === "live",
         };
       })
       .sort((left, right) => left.startedAtMs - right.startedAtMs);
@@ -628,6 +630,31 @@ function App() {
       </header>
 
       <section className="agendaScrollArea">
+        <article className="asRunCard">
+          <div className="asRunHead">
+            <h2>Gesendete TOPs</h2>
+            <p>Vorschau für den PDF-Export</p>
+          </div>
+
+          {asRunEntries.length === 0 ? (
+            <p className="asRunEmpty">Noch keine gesendeten Tagesordnungspunkte.</p>
+          ) : (
+            <ul className="asRunList">
+              {asRunEntries.map((entry) => (
+                <li key={entry.id} className="asRunItem">
+                  <span className="asRunTop">{entry.topLabel}</span>
+                  <span className="asRunCell">Start {entry.startedAtLabel}</span>
+                  <span className="asRunCell">Geplant {entry.plannedLabel}</span>
+                  <span className="asRunCell">Ist {entry.actualLabel}</span>
+                  <span className={entry.isLive ? "asRunBadge live" : "asRunBadge done"}>
+                    {entry.isLive ? "Läuft" : "Fertig"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+
         <article className="agendaCard">
           <h2>Agenda</h2>
           <p className="hint">Zukünftige Punkte lassen sich umsortieren oder auf Halt setzen.</p>

@@ -241,6 +241,87 @@ p {
   min-height: 0;
   overflow: auto;
   padding: 1rem 1.2rem 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.asRunCard {
+  background: #fff;
+  border-radius: 1.1rem;
+  box-shadow: 0 4px 14px rgb(13 28 46 / 14%);
+  padding: 0.9rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.asRunHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.asRunHead h2 {
+  font-size: 1.45rem;
+}
+
+.asRunHead p {
+  font-size: 0.92rem;
+  color: #5a718a;
+}
+
+.asRunEmpty {
+  font-size: 0.96rem;
+  color: #59708a;
+}
+
+.asRunList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.asRunItem {
+  border: 1px solid #d7e4f3;
+  border-radius: 0.7rem;
+  padding: 0.45rem 0.55rem;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.asRunTop {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #1a334d;
+}
+
+.asRunCell {
+  font-size: 0.88rem;
+  color: #4e6780;
+}
+
+.asRunBadge {
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.asRunBadge.live {
+  background: #e7f8ed;
+  color: #0c6f33;
+}
+
+.asRunBadge.done {
+  background: #edf4ff;
+  color: #1b4f91;
 }
 
 .agendaCard {
@@ -483,6 +564,19 @@ p {
 
   .spaceHint {
     text-align: center;
+  }
+
+  .asRunHead {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .asRunItem {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .asRunTop {
+    grid-column: 1 / -1;
   }
 
   .agendaItem {
