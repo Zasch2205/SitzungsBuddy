@@ -27,6 +27,8 @@ type AsRunEntry = {
   isLive: boolean;
 };
 
+type AsRunFilter = "completed" | "all";
+
 const initialAgenda: AgendaItem[] = [
   {
     id: "d1-1",
@@ -138,6 +140,7 @@ function App() {
   const [settingsTitleDraft, setSettingsTitleDraft] = useState(meetingTitle);
   const [settingsDateDraft, setSettingsDateDraft] = useState(meetingDate);
   const [settingsLocationDraft, setSettingsLocationDraft] = useState(meetingLocation);
+  const [asRunFilter, setAsRunFilter] = useState<AsRunFilter>("all");
 
   const currentIndex = useMemo(
     () => agenda.findIndex((item) => item.id === currentItemId),
@@ -200,6 +203,14 @@ function App() {
       })
       .sort((left, right) => left.startedAtMs - right.startedAtMs);
   }, [agenda, currentItemId, nowMs]);
+
+  const filteredAsRunEntries = useMemo(() => {
+    if (asRunFilter === "completed") {
+      return asRunEntries.filter((entry) => !entry.isLive);
+    }
+
+    return asRunEntries;
+  }, [asRunEntries, asRunFilter]);
 
   const advanceToNextItem = useCallback(() => {
     if (!onAir) {
@@ -632,15 +643,38 @@ function App() {
       <section className="agendaScrollArea">
         <article className="asRunCard">
           <div className="asRunHead">
-            <h2>Gesendete TOPs</h2>
-            <p>Vorschau für den PDF-Export</p>
+            <div>
+              <h2>Gesendete TOPs</h2>
+              <p>Vorschau für den PDF-Export</p>
+            </div>
+
+            <div className="asRunFilter" role="group" aria-label="AsRun Filter">
+              <button
+                type="button"
+                className={asRunFilter === "completed" ? "asRunFilterButton active" : "asRunFilterButton"}
+                onClick={() => setAsRunFilter("completed")}
+              >
+                Nur fertige TOPs
+              </button>
+              <button
+                type="button"
+                className={asRunFilter === "all" ? "asRunFilterButton active" : "asRunFilterButton"}
+                onClick={() => setAsRunFilter("all")}
+              >
+                inkl. laufendem TOP
+              </button>
+            </div>
           </div>
 
-          {asRunEntries.length === 0 ? (
-            <p className="asRunEmpty">Noch keine gesendeten Tagesordnungspunkte.</p>
+          {filteredAsRunEntries.length === 0 ? (
+            <p className="asRunEmpty">
+              {asRunEntries.length === 0
+                ? "Noch keine gesendeten Tagesordnungspunkte."
+                : "Aktuell keine fertigen TOPs in der Ansicht."}
+            </p>
           ) : (
             <ul className="asRunList">
-              {asRunEntries.map((entry) => (
+              {filteredAsRunEntries.map((entry) => (
                 <li key={entry.id} className="asRunItem">
                   <span className="asRunTop">{entry.topLabel}</span>
                   <span className="asRunCell">Start {entry.startedAtLabel}</span>

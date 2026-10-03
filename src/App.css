@@ -259,7 +259,7 @@ p {
 .asRunHead {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 0.75rem;
 }
 
@@ -270,6 +270,28 @@ p {
 .asRunHead p {
   font-size: 0.92rem;
   color: #5a718a;
+}
+
+.asRunFilter {
+  display: inline-flex;
+  gap: 0.45rem;
+}
+
+.asRunFilterButton {
+  border: 2px solid #9bb4cf;
+  border-radius: 0.6rem;
+  background: #eaf1f9;
+  color: #21415f;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.34rem 0.55rem;
+  cursor: pointer;
+}
+
+.asRunFilterButton.active {
+  border-color: #0f4d84;
+  background: #0f4d84;
+  color: #fff;
 }
 
 .asRunEmpty {
@@ -569,6 +591,10 @@ p {
   .asRunHead {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .asRunFilter {
+    flex-wrap: wrap;
   }
 
   .asRunItem {
