@@ -35,7 +35,7 @@ p {
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: 1.25rem 1.5rem 1rem;
+  padding: 0.75rem 1.2rem 0.65rem;
   background: #8ef994;
   border-bottom: 3px solid #183045;
 }
@@ -44,21 +44,21 @@ p {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 1.2rem;
+  gap: 0.9rem;
 }
 
 .leftHeaderStack {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.85rem;
+  gap: 0.4rem;
 }
 
 .logoTile {
-  width: 8.3rem;
+  width: 7.1rem;
   border-radius: 0.35rem;
-  box-shadow: 0 10px 20px rgb(0 0 0 / 18%);
   overflow: hidden;
+  box-shadow: 0 7px 14px rgb(0 0 0 / 18%);
 }
 
 .logoImage {
@@ -67,17 +67,40 @@ p {
   display: block;
 }
 
+.dateArea {
+  text-align: center;
+  line-height: 1.1;
+}
+
+.dateArea p {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.dateArea strong {
+  font-size: 1.35rem;
+}
+
+.titleArea {
+  text-align: center;
+}
+
+.titleArea h1 {
+  font-size: clamp(2rem, 4.2vw, 3.8rem);
+  letter-spacing: 0.03em;
+  line-height: 1;
+}
+
 .onAirButton {
-  width: 7.3rem;
-  height: 7.3rem;
+  width: 6.5rem;
+  height: 6.5rem;
   border-radius: 1rem;
   border: 3px solid #0f1d2d;
-  font-size: 2rem;
-  line-height: 0.95;
-  font-weight: 800;
-  white-space: pre-line;
+  font-size: 1.9rem;
+  line-height: 0.9;
+  font-weight: 900;
   color: #fff;
-  background: #c40e22;
+  background: #7d8794;
   box-shadow: 0 8px 18px rgb(0 0 0 / 18%);
   cursor: pointer;
 }
@@ -86,44 +109,22 @@ p {
   background: #e20f27;
 }
 
-.titleArea {
-  text-align: center;
-}
-
-.titleArea h1 {
-  font-size: clamp(2rem, 5vw, 4rem);
-  letter-spacing: 0.03em;
-}
-
-.dateArea {
-  text-align: right;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  font-size: 1.05rem;
-}
-
-.dateArea strong {
-  font-size: 2rem;
-  line-height: 1;
-}
-
 .headerDivider {
-  margin: 0.75rem 0 1.05rem;
+  margin: 0.45rem 0 0.62rem;
   border-bottom: 3px solid #183045;
 }
 
 .statusLayout {
   display: grid;
-  grid-template-columns: minmax(260px, 340px) minmax(330px, 1fr) auto;
+  grid-template-columns: minmax(250px, 340px) minmax(350px, 1fr) auto;
   align-items: start;
-  gap: 1.25rem;
+  gap: 1rem;
 }
 
 .statusColumn {
   display: grid;
   justify-items: center;
-  gap: 0.35rem;
+  gap: 0.2rem;
 }
 
 .rightColumn {
@@ -131,7 +132,7 @@ p {
 }
 
 .fieldLabel {
-  font-size: 1.95rem;
+  font-size: 1.12rem;
   font-weight: 700;
   text-align: center;
 }
@@ -139,13 +140,13 @@ p {
 .valueBox,
 .topBox {
   border: 3px solid #0f1d2d;
-  border-radius: 0.9rem;
+  border-radius: 0.8rem;
   background: #fff;
-  padding: 0.25rem 1rem;
-  font-size: clamp(1.7rem, 3.2vw, 3rem);
+  padding: 0.25rem 0.8rem;
+  font-size: clamp(1.45rem, 2.8vw, 2.6rem);
   font-weight: 800;
   text-align: center;
-  min-height: 4.15rem;
+  min-height: 3.35rem;
   width: 100%;
   display: flex;
   align-items: center;
@@ -153,22 +154,22 @@ p {
 }
 
 .topBox {
-  background: #a8ffad;
+  background: #ffeb4d;
   color: #0f4d84;
-  font-size: clamp(1.45rem, 2.5vw, 2.4rem);
+  font-size: clamp(1.2rem, 2.2vw, 2.2rem);
   justify-content: flex-start;
-  padding-inline: 1.1rem;
+  padding-inline: 1rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .deltaValue {
-  margin-top: 0.2rem;
-  font-size: clamp(1.9rem, 3.2vw, 3rem);
+  margin-top: 0.1rem;
+  font-size: clamp(1.45rem, 2.8vw, 2.4rem);
   font-weight: 900;
   text-align: center;
-  min-height: 3.2rem;
+  min-height: 2.5rem;
 }
 
 .deltaGreen {
@@ -187,8 +188,8 @@ p {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.75rem;
-  padding-top: 1.9rem;
+  gap: 0.65rem;
+  padding-top: 0.45rem;
 }
 
 .iconButton {
@@ -196,16 +197,17 @@ p {
   background: #a8b6c4;
   color: #1a2836;
   border-radius: 0.8rem;
-  width: 4rem;
-  height: 4rem;
+  width: 3.8rem;
+  height: 3.8rem;
   font-size: 1.9rem;
   font-weight: 700;
   cursor: pointer;
+  display: grid;
+  place-items: center;
 }
 
-.iconButton.primary {
-  background: #0f4d84;
-  color: #fff;
+.iconButton:hover {
+  filter: brightness(0.96);
 }
 
 .iconButton:disabled {
@@ -213,26 +215,42 @@ p {
   cursor: not-allowed;
 }
 
+.exportButton {
+  background: #0f4d84;
+  color: #fff;
+}
+
+.iconSvg {
+  width: 1.8rem;
+  height: 1.8rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .spaceHint {
-  font-size: 0.95rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: #1b334d;
+  text-align: right;
 }
 
 .agendaScrollArea {
   min-height: 0;
   overflow: auto;
-  padding: 1.2rem 1.5rem 1.6rem;
+  padding: 1rem 1.2rem 1.4rem;
 }
 
 .agendaCard {
   background: #fff;
   border-radius: 1.1rem;
   box-shadow: 0 4px 14px rgb(13 28 46 / 14%);
-  padding: 1.2rem;
+  padding: 1.1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 
 .agendaCard h2 {
@@ -423,10 +441,6 @@ p {
 }
 
 @media (max-width: 1400px) {
-  .fieldLabel {
-    font-size: 1.25rem;
-  }
-
   .agendaCard h2 {
     font-size: 2.1rem;
   }
@@ -451,19 +465,11 @@ p {
 }
 
 @media (max-width: 1040px) {
-  .appShell {
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
   .headerTopRow {
     grid-template-columns: 1fr;
     justify-items: center;
     text-align: center;
-  }
-
-  .dateArea {
-    align-items: center;
-    text-align: center;
+    gap: 0.75rem;
   }
 
   .statusLayout {
@@ -473,6 +479,10 @@ p {
   .actionColumn {
     align-items: center;
     padding-top: 0;
+  }
+
+  .spaceHint {
+    text-align: center;
   }
 
   .agendaItem {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { jsPDF } from "jspdf";
 import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
 import "./App.css";
 
@@ -12,6 +13,17 @@ type AgendaItem = {
   title: string;
   plannedDurationSec: number;
   state: AgendaState;
+  actualStartedAtMs: number | null;
+  actualEndedAtMs: number | null;
+};
+
+type AsRunEntry = {
+  id: string;
+  topLabel: string;
+  startedAtMs: number;
+  startedAtLabel: string;
+  plannedLabel: string;
+  actualLabel: string;
 };
 
 const initialAgenda: AgendaItem[] = [
@@ -23,6 +35,8 @@ const initialAgenda: AgendaItem[] = [
     title: "Begrüßung und Zielsetzung",
     plannedDurationSec: 15 * 60,
     state: "planned",
+    actualStartedAtMs: null,
+    actualEndedAtMs: null,
   },
   {
     id: "d1-2",
@@ -32,6 +46,8 @@ const initialAgenda: AgendaItem[] = [
     title: "Statusberichte der Fachbereiche",
     plannedDurationSec: 45 * 60,
     state: "planned",
+    actualStartedAtMs: null,
+    actualEndedAtMs: null,
   },
   {
     id: "d1-3",
@@ -41,6 +57,8 @@ const initialAgenda: AgendaItem[] = [
     title: "Entscheidung Budget 2027",
     plannedDurationSec: 30 * 60,
     state: "planned",
+    actualStartedAtMs: null,
+    actualEndedAtMs: null,
   },
   {
     id: "d2-1",
@@ -50,10 +68,13 @@ const initialAgenda: AgendaItem[] = [
     title: "Roadmap-Planung",
     plannedDurationSec: 60 * 60,
     state: "planned",
+    actualStartedAtMs: null,
+    actualEndedAtMs: null,
   },
 ];
 
 const movableStates: AgendaState[] = ["planned", "hold"];
+const defaultMeetingDateLabel = "01. Oktober";
 
 function normalizeOrder(items: AgendaItem[]): AgendaItem[] {
   return items.map((item, index) => ({ ...item, order: index + 1 }));
@@ -80,6 +101,10 @@ function formatCompact(seconds: number): string {
   return [minutes, secs].map((part) => part.toString().padStart(2, "0")).join(":");
 }
 
+function formatTimeOfDay(timestampMs: number): string {
+  return new Date(timestampMs).toLocaleTimeString("de-DE", { hour12: false });
+}
+
 function stateLabel(state: AgendaState): string {
   switch (state) {
     case "planned":
@@ -97,13 +122,6 @@ function stateLabel(state: AgendaState): string {
   }
 }
 
-function buildDefaultMeetingDateLabel(nowMs: number): string {
-  return new Date(nowMs).toLocaleDateString("de-DE", {
-    day: "2-digit",
-    month: "long",
-  });
-}
-
 function App() {
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
@@ -111,8 +129,9 @@ function App() {
   const [currentItemId, setCurrentItemId] = useState<string | null>(null);
   const [currentItemStartedAt, setCurrentItemStartedAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState<number>(Date.now());
+
   const [meetingTitle, setMeetingTitle] = useState("135. PTKO");
-  const [meetingDate, setMeetingDate] = useState(() => buildDefaultMeetingDateLabel(Date.now()));
+  const [meetingDate, setMeetingDate] = useState(defaultMeetingDateLabel);
   const [meetingLocation, setMeetingLocation] = useState("Hamburg");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTitleDraft, setSettingsTitleDraft] = useState(meetingTitle);
@@ -160,10 +179,25 @@ function App() {
 
   const prognosisSec = totalElapsedSec - plannedElapsedSec;
 
-  const nextPlannedIndex = useMemo(
-    () => agenda.findIndex((item) => item.state === "planned"),
-    [agenda],
-  );
+  const asRunEntries = useMemo<AsRunEntry[]>(() => {
+    return agenda
+      .filter((item) => item.actualStartedAtMs !== null)
+      .map((item) => {
+        const startedAtMs = item.actualStartedAtMs ?? nowMs;
+        const finishedAtMs = item.actualEndedAtMs ?? (item.id === currentItemId ? nowMs : startedAtMs);
+        const actualSec = Math.max(0, Math.floor((finishedAtMs - startedAtMs) / 1000));
+
+        return {
+          id: item.id,
+          topLabel: `${item.top} ${item.title}`,
+          startedAtMs,
+          startedAtLabel: formatTimeOfDay(startedAtMs),
+          plannedLabel: formatClock(item.plannedDurationSec),
+          actualLabel: formatClock(actualSec),
+        };
+      })
+      .sort((left, right) => left.startedAtMs - right.startedAtMs);
+  }, [agenda, currentItemId, nowMs]);
 
   const advanceToNextItem = useCallback(() => {
     if (!onAir) {
@@ -182,11 +216,20 @@ function App() {
 
     const updated = agenda.map((item) => {
       if (item.id === currentItemId && item.state === "live") {
-        return { ...item, state: "done" as const };
+        return {
+          ...item,
+          state: "done" as const,
+          actualEndedAtMs: timestamp,
+        };
       }
 
       if (item.id === nextItemId) {
-        return { ...item, state: "live" as const };
+        return {
+          ...item,
+          state: "live" as const,
+          actualStartedAtMs: item.actualStartedAtMs ?? timestamp,
+          actualEndedAtMs: null,
+        };
       }
 
       return item;
@@ -221,10 +264,20 @@ function App() {
     }
 
     setAgenda((previous) =>
-      previous.map((item) =>
-        item.id === firstPlanned.id ? { ...item, state: "live" as const } : item,
-      ),
+      previous.map((item) => {
+        if (item.id !== firstPlanned.id) {
+          return item;
+        }
+
+        return {
+          ...item,
+          state: "live" as const,
+          actualStartedAtMs: item.actualStartedAtMs ?? timestamp,
+          actualEndedAtMs: null,
+        };
+      }),
     );
+
     setCurrentItemId(firstPlanned.id);
     setCurrentItemStartedAt(timestamp);
   }, [agenda, currentItemId, onAir, sessionStartedAt]);
@@ -258,6 +311,78 @@ function App() {
 
     setIsSettingsOpen(false);
   }, [settingsDateDraft, settingsLocationDraft, settingsTitleDraft]);
+
+  const exportAsRunPdf = useCallback(() => {
+    if (asRunEntries.length === 0) {
+      window.alert("Es wurden noch keine Tagesordnungspunkte gesendet.");
+      return;
+    }
+
+    const document = new jsPDF({ unit: "pt", format: "a4" });
+    const margin = 42;
+    const pageHeight = document.internal.pageSize.getHeight();
+    const columnTop = margin;
+    const columnStart = 300;
+    const columnPlanned = 404;
+    const columnActual = 500;
+    let cursorY = 52;
+
+    const drawTableHeader = (y: number) => {
+      document.setFont("helvetica", "bold");
+      document.setFontSize(11);
+      document.text("TOP", columnTop, y);
+      document.text("Start", columnStart, y);
+      document.text("Geplant", columnPlanned, y);
+      document.text("Ist", columnActual, y);
+      document.setLineWidth(1);
+      document.line(margin, y + 8, 554, y + 8);
+      return y + 22;
+    };
+
+    document.setFont("helvetica", "bold");
+    document.setFontSize(18);
+    document.text("AsRun Log", margin, cursorY);
+
+    cursorY += 22;
+    document.setFont("helvetica", "normal");
+    document.setFontSize(11);
+    document.text(`${meetingTitle} · ${meetingDate} · ${meetingLocation}`, margin, cursorY);
+
+    cursorY += 16;
+    document.text(
+      `Exportzeit: ${new Date(nowMs).toLocaleString("de-DE", { hour12: false })}`,
+      margin,
+      cursorY,
+    );
+
+    cursorY += 26;
+    cursorY = drawTableHeader(cursorY);
+
+    document.setFont("helvetica", "normal");
+    document.setFontSize(10);
+
+    asRunEntries.forEach((entry) => {
+      if (cursorY > pageHeight - 46) {
+        document.addPage();
+        cursorY = drawTableHeader(52);
+        document.setFont("helvetica", "normal");
+        document.setFontSize(10);
+      }
+
+      const topLabel =
+        entry.topLabel.length > 45 ? `${entry.topLabel.slice(0, 42).trimEnd()}…` : entry.topLabel;
+
+      document.text(topLabel, columnTop, cursorY);
+      document.text(entry.startedAtLabel, columnStart, cursorY);
+      document.text(entry.plannedLabel, columnPlanned, cursorY);
+      document.text(entry.actualLabel, columnActual, cursorY);
+
+      cursorY += 18;
+    });
+
+    const stamp = new Date(nowMs).toISOString().replace(/[.:]/g, "-");
+    document.save(`asrun-log-${stamp}.pdf`);
+  }, [asRunEntries, meetingDate, meetingLocation, meetingTitle, nowMs]);
 
   const moveFutureItem = useCallback(
     (index: number, direction: -1 | 1) => {
@@ -328,7 +453,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space") {
+      if (event.code !== "Space" || isSettingsOpen) {
         return;
       }
 
@@ -343,7 +468,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem]);
+  }, [advanceToNextItem, isSettingsOpen]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -364,9 +489,7 @@ function App() {
     return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
   }, [nowMs]);
 
-  const currentTopLabel = currentItem
-    ? `${currentItem.top} ${currentItem.title}`
-    : "Kein aktiver TOP";
+  const currentTopLabel = currentItem ? `${currentItem.top}. ${currentItem.title}` : "Kein aktiver TOP";
 
   const countdownLabel = useMemo(() => {
     if (!currentItem) {
@@ -432,23 +555,25 @@ function App() {
             <div className="logoTile" aria-label="Sitzungsbuddy Logo">
               <img src={logoOriginal} alt="Sitzungsbuddy Logo" className="logoImage" />
             </div>
-            <button
-              type="button"
-              className={onAir ? "onAirButton active" : "onAirButton"}
-              onClick={startOnAir}
-            >
-              {onAir ? "On\nAir" : "On\nAir"}
-            </button>
+            <div className="dateArea">
+              <p>{meetingDate}</p>
+              <strong>{meetingLocation}</strong>
+            </div>
           </div>
 
           <div className="titleArea">
             <h1>{meetingTitle}</h1>
           </div>
 
-          <div className="dateArea">
-            <p>{meetingDate}</p>
-            <strong>{meetingLocation}</strong>
-          </div>
+          <button
+            type="button"
+            className={onAir ? "onAirButton active" : "onAirButton"}
+            onClick={startOnAir}
+          >
+            On
+            <br />
+            Air
+          </button>
         </div>
 
         <div className="headerDivider" />
@@ -486,13 +611,16 @@ function App() {
             </button>
             <button
               type="button"
-              className="iconButton primary"
-              onClick={advanceToNextItem}
-              disabled={!onAir || nextPlannedIndex < 0}
-              aria-label="Nächster TOP"
-              title="Nächster TOP"
+              className="iconButton exportButton"
+              onClick={exportAsRunPdf}
+              aria-label="AsRun Log als PDF exportieren"
+              title="AsRun Log als PDF exportieren"
             >
-              ↪
+              <svg className="iconSvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="4" y="9" width="14" height="11" rx="2" />
+                <path d="M13 4h7v7" />
+                <path d="M20 4l-9 9" />
+              </svg>
             </button>
             <p className="spaceHint">Leertaste = Nächster TOP</p>
           </aside>
