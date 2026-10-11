@@ -91,6 +91,12 @@ p {
   line-height: 1;
 }
 
+.sessionControlGroup {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .onAirButton {
   width: 6.5rem;
   height: 6.5rem;
@@ -107,6 +113,32 @@ p {
 
 .onAirButton.active {
   background: #e20f27;
+}
+
+.miniSessionButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.miniSessionButton {
+  width: 3.1rem;
+  height: 3.1rem;
+  border-radius: 0.65rem;
+  border: 3px solid #0f1d2d;
+  background: #7d8794;
+  color: #fff;
+  font-size: 1.3rem;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.miniSessionButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .headerDivider {

@@ -16,6 +16,7 @@ type AgendaItem = {
   state: AgendaState;
   actualStartedAtMs: number | null;
   actualEndedAtMs: number | null;
+  actualPausedMsTotal: number;
 };
 
 type AsRunEntry = {
@@ -41,6 +42,7 @@ const initialAgenda: AgendaItem[] = [
     state: "planned",
     actualStartedAtMs: null,
     actualEndedAtMs: null,
+    actualPausedMsTotal: 0,
   },
   {
     id: "d1-2",
@@ -52,6 +54,7 @@ const initialAgenda: AgendaItem[] = [
     state: "planned",
     actualStartedAtMs: null,
     actualEndedAtMs: null,
+    actualPausedMsTotal: 0,
   },
   {
     id: "d1-3",
@@ -63,6 +66,7 @@ const initialAgenda: AgendaItem[] = [
     state: "planned",
     actualStartedAtMs: null,
     actualEndedAtMs: null,
+    actualPausedMsTotal: 0,
   },
   {
     id: "d2-1",
@@ -74,6 +78,7 @@ const initialAgenda: AgendaItem[] = [
     state: "planned",
     actualStartedAtMs: null,
     actualEndedAtMs: null,
+    actualPausedMsTotal: 0,
   },
 ];
 
@@ -221,6 +226,7 @@ function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
       state: "planned",
       actualStartedAtMs: null,
       actualEndedAtMs: null,
+      actualPausedMsTotal: 0,
     });
   }
 
@@ -232,6 +238,12 @@ function App() {
 
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [pauseStartedAtMs, setPauseStartedAtMs] = useState<number | null>(null);
+  const [sessionPausedMsTotal, setSessionPausedMsTotal] = useState(0);
+  const [currentItemPausedMsTotal, setCurrentItemPausedMsTotal] = useState(0);
+  const [sessionStoppedAtMs, setSessionStoppedAtMs] = useState<number | null>(null);
+  const [currentItemStoppedAtMs, setCurrentItemStoppedAtMs] = useState<number | null>(null);
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
   const [currentItemId, setCurrentItemId] = useState<string | null>(null);
   const [currentItemStartedAt, setCurrentItemStartedAt] = useState<number | null>(null);
@@ -259,16 +271,38 @@ function App() {
       return 0;
     }
 
-    return Math.max(0, Math.floor((nowMs - sessionStartedAt) / 1000));
-  }, [sessionStartedAt, nowMs]);
+    const referenceNow = onAir
+      ? isPaused && pauseStartedAtMs !== null
+        ? pauseStartedAtMs
+        : nowMs
+      : sessionStoppedAtMs ?? nowMs;
+
+    const elapsedMs = referenceNow - sessionStartedAt - sessionPausedMsTotal;
+    return Math.max(0, Math.floor(elapsedMs / 1000));
+  }, [isPaused, nowMs, onAir, pauseStartedAtMs, sessionPausedMsTotal, sessionStartedAt, sessionStoppedAtMs]);
 
   const currentElapsedSec = useMemo(() => {
     if (currentItemStartedAt === null) {
       return 0;
     }
 
-    return Math.max(0, Math.floor((nowMs - currentItemStartedAt) / 1000));
-  }, [currentItemStartedAt, nowMs]);
+    const referenceNow = onAir
+      ? isPaused && pauseStartedAtMs !== null
+        ? pauseStartedAtMs
+        : nowMs
+      : currentItemStoppedAtMs ?? nowMs;
+
+    const elapsedMs = referenceNow - currentItemStartedAt - currentItemPausedMsTotal;
+    return Math.max(0, Math.floor(elapsedMs / 1000));
+  }, [
+    currentItemPausedMsTotal,
+    currentItemStartedAt,
+    currentItemStoppedAtMs,
+    isPaused,
+    nowMs,
+    onAir,
+    pauseStartedAtMs,
+  ]);
 
   const remainingSec = currentItem ? currentItem.plannedDurationSec - currentElapsedSec : 0;
 
@@ -294,7 +328,10 @@ function App() {
       .map((item) => {
         const startedAtMs = item.actualStartedAtMs ?? nowMs;
         const finishedAtMs = item.actualEndedAtMs ?? (item.id === currentItemId ? nowMs : startedAtMs);
-        const actualSec = Math.max(0, Math.floor((finishedAtMs - startedAtMs) / 1000));
+        const livePauseDeltaMs =
+          item.state === "live" && isPaused && pauseStartedAtMs !== null ? nowMs - pauseStartedAtMs : 0;
+        const actualMs = finishedAtMs - startedAtMs - item.actualPausedMsTotal - livePauseDeltaMs;
+        const actualSec = Math.max(0, Math.floor(actualMs / 1000));
 
         return {
           id: item.id,
@@ -307,7 +344,7 @@ function App() {
         };
       })
       .sort((left, right) => left.startedAtMs - right.startedAtMs);
-  }, [agenda, currentItemId, nowMs]);
+  }, [agenda, currentItemId, isPaused, nowMs, pauseStartedAtMs]);
 
   const filteredAsRunEntries = useMemo(() => {
     if (asRunFilter === "completed") {
@@ -318,7 +355,7 @@ function App() {
   }, [asRunEntries, asRunFilter]);
 
   const advanceToNextItem = useCallback(() => {
-    if (!onAir) {
+    if (!onAir || isPaused) {
       return;
     }
 
@@ -356,8 +393,10 @@ function App() {
     setAgenda(updated);
     setCurrentItemId(nextItemId);
     setCurrentItemStartedAt(nextItemId ? timestamp : null);
+    setCurrentItemPausedMsTotal(0);
+    setCurrentItemStoppedAtMs(nextItemId ? null : timestamp);
     setNowMs(timestamp);
-  }, [agenda, currentItemId, onAir]);
+  }, [agenda, currentItemId, isPaused, onAir]);
 
   const startOnAir = useCallback(() => {
     if (onAir) {
@@ -366,13 +405,18 @@ function App() {
 
     const timestamp = Date.now();
     setOnAir(true);
+    setIsPaused(false);
+    setPauseStartedAtMs(null);
+    setSessionStoppedAtMs(null);
     setNowMs(timestamp);
 
     if (sessionStartedAt === null) {
       setSessionStartedAt(timestamp);
+      setSessionPausedMsTotal(0);
     }
 
     if (currentItemId !== null) {
+      setCurrentItemStoppedAtMs(null);
       return;
     }
 
@@ -398,7 +442,94 @@ function App() {
 
     setCurrentItemId(firstPlanned.id);
     setCurrentItemStartedAt(timestamp);
+    setCurrentItemPausedMsTotal(0);
+    setCurrentItemStoppedAtMs(null);
   }, [agenda, currentItemId, onAir, sessionStartedAt]);
+
+  const togglePauseSession = useCallback(() => {
+    if (!onAir) {
+      return;
+    }
+
+    const timestamp = Date.now();
+
+    if (!isPaused) {
+      setIsPaused(true);
+      setPauseStartedAtMs(timestamp);
+      return;
+    }
+
+    const activePauseStartedAt = pauseStartedAtMs ?? timestamp;
+    const pauseDurationMs = Math.max(0, timestamp - activePauseStartedAt);
+
+    setIsPaused(false);
+    setPauseStartedAtMs(null);
+    setSessionPausedMsTotal((previous) => previous + pauseDurationMs);
+
+    if (currentItemId !== null) {
+      setCurrentItemPausedMsTotal((previous) => previous + pauseDurationMs);
+      setAgenda((previous) =>
+        previous.map((item) => {
+          if (item.id !== currentItemId) {
+            return item;
+          }
+
+          return {
+            ...item,
+            actualPausedMsTotal: item.actualPausedMsTotal + pauseDurationMs,
+          };
+        }),
+      );
+    }
+  }, [currentItemId, isPaused, onAir, pauseStartedAtMs]);
+
+  const stopSession = useCallback(() => {
+    if (!onAir && !isPaused) {
+      return;
+    }
+
+    const shouldStop = window.confirm("Sitzung wirklich beenden?");
+    if (!shouldStop) {
+      return;
+    }
+
+    const timestamp = Date.now();
+    const activePauseStartedAt = isPaused ? pauseStartedAtMs ?? timestamp : null;
+    const pauseDurationMs = activePauseStartedAt ? Math.max(0, timestamp - activePauseStartedAt) : 0;
+
+    if (pauseDurationMs > 0) {
+      setSessionPausedMsTotal((previous) => previous + pauseDurationMs);
+
+      if (currentItemId !== null) {
+        setCurrentItemPausedMsTotal((previous) => previous + pauseDurationMs);
+      }
+    }
+
+    setAgenda((previous) =>
+      previous.map((item) => {
+        if (item.id !== currentItemId || item.state !== "live") {
+          return item;
+        }
+
+        return {
+          ...item,
+          state: "done" as const,
+          actualEndedAtMs: timestamp,
+          actualPausedMsTotal: item.actualPausedMsTotal + pauseDurationMs,
+        };
+      }),
+    );
+
+    setOnAir(false);
+    setIsPaused(false);
+    setPauseStartedAtMs(null);
+    setSessionStoppedAtMs(timestamp);
+    setCurrentItemStoppedAtMs(timestamp);
+    setCurrentItemId(null);
+    setCurrentItemStartedAt(null);
+    setCurrentItemPausedMsTotal(0);
+    setNowMs(timestamp);
+  }, [currentItemId, isPaused, onAir, pauseStartedAtMs]);
 
   const openSettings = useCallback(() => {
     setSettingsTitleDraft(meetingTitle);
@@ -469,9 +600,15 @@ function App() {
         setMeetingLocation(importedLocation);
 
         setOnAir(false);
+        setIsPaused(false);
+        setPauseStartedAtMs(null);
+        setSessionPausedMsTotal(0);
+        setCurrentItemPausedMsTotal(0);
         setSessionStartedAt(null);
+        setSessionStoppedAtMs(null);
         setCurrentItemId(null);
         setCurrentItemStartedAt(null);
+        setCurrentItemStoppedAtMs(null);
         setAsRunFilter("all");
         setNowMs(Date.now());
 
@@ -739,15 +876,40 @@ function App() {
             <h1>{meetingTitle}</h1>
           </div>
 
-          <button
-            type="button"
-            className={onAir ? "onAirButton active" : "onAirButton"}
-            onClick={startOnAir}
-          >
-            On
-            <br />
-            Air
-          </button>
+          <div className="sessionControlGroup">
+            <button
+              type="button"
+              className={onAir ? "onAirButton active" : "onAirButton"}
+              onClick={startOnAir}
+            >
+              On
+              <br />
+              Air
+            </button>
+
+            <div className="miniSessionButtons">
+              <button
+                type="button"
+                className="miniSessionButton"
+                onClick={togglePauseSession}
+                disabled={!onAir}
+                title={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
+                aria-label={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
+              >
+                {isPaused ? "▶" : "❚❚"}
+              </button>
+              <button
+                type="button"
+                className="miniSessionButton"
+                onClick={stopSession}
+                disabled={!onAir && !isPaused}
+                title="Sitzung beenden"
+                aria-label="Sitzung beenden"
+              >
+                ■
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="headerDivider" />
