@@ -1,6 +1,9 @@
 import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
+import helpOverviewImage from "./assets/help-overview.png";
 import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
 import "./App.css";
 
@@ -84,6 +87,9 @@ const initialAgenda: AgendaItem[] = [
 
 const movableStates: AgendaState[] = ["planned", "hold"];
 const defaultMeetingDateLabel = "01. Oktober";
+const maxImportFileSizeBytes = 5 * 1024 * 1024;
+const maxImportSheetCount = 5;
+const maxImportCellCount = 20_000;
 
 function normalizeOrder(items: AgendaItem[]): AgendaItem[] {
   return items.map((item, index) => ({ ...item, order: index + 1 }));
@@ -114,6 +120,14 @@ function formatTimeOfDay(timestampMs: number): string {
   return new Date(timestampMs).toLocaleTimeString("de-DE", { hour12: false });
 }
 
+function sanitizeImportedText(rawValue: string, maxLength = 240): string {
+  return rawValue
+    .replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
 function stateLabel(state: AgendaState): string {
   switch (state) {
     case "planned":
@@ -138,10 +152,10 @@ function readCellText(sheet: XLSX.WorkSheet, address: string): string {
   }
 
   if (cell.v instanceof Date) {
-    return cell.v.toLocaleDateString("de-DE");
+    return sanitizeImportedText(cell.v.toLocaleDateString("de-DE"), 120);
   }
 
-  return String(cell.v).trim();
+  return sanitizeImportedText(String(cell.v));
 }
 
 function readLabeledValue(sheet: XLSX.WorkSheet, labelPattern: RegExp): string {
@@ -276,6 +290,41 @@ function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
   return imported;
 }
 
+function resolveTimerReferenceMs(options: {
+  onAir: boolean;
+  isPaused: boolean;
+  pauseStartedAtMs: number | null;
+  stoppedAtMs: number | null;
+  nowMs: number;
+}): number {
+  if (options.onAir) {
+    if (options.isPaused && options.pauseStartedAtMs !== null) {
+      return options.pauseStartedAtMs;
+    }
+
+    return options.nowMs;
+  }
+
+  return options.stoppedAtMs ?? options.nowMs;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function ensurePdfExtension(path: string): string {
+  return path.toLowerCase().endsWith(".pdf") ? path : `${path}.pdf`;
+}
+
 function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const appVersion = __APP_VERSION__;
@@ -297,6 +346,7 @@ function App() {
   const [meetingDate, setMeetingDate] = useState(defaultMeetingDateLabel);
   const [meetingLocation, setMeetingLocation] = useState("Hamburg");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isStopConfirmOpen, setIsStopConfirmOpen] = useState(false);
   const [settingsTitleDraft, setSettingsTitleDraft] = useState(meetingTitle);
   const [settingsDateDraft, setSettingsDateDraft] = useState(meetingDate);
@@ -322,11 +372,13 @@ function App() {
       return 0;
     }
 
-    const referenceNow = onAir
-      ? isPaused && pauseStartedAtMs !== null
-        ? pauseStartedAtMs
-        : nowMs
-      : sessionStoppedAtMs ?? nowMs;
+    const referenceNow = resolveTimerReferenceMs({
+      onAir,
+      isPaused,
+      pauseStartedAtMs,
+      stoppedAtMs: sessionStoppedAtMs,
+      nowMs,
+    });
 
     const elapsedMs = referenceNow - sessionStartedAt - sessionPausedMsTotal;
     return Math.max(0, Math.floor(elapsedMs / 1000));
@@ -337,11 +389,13 @@ function App() {
       return 0;
     }
 
-    const referenceNow = onAir
-      ? isPaused && pauseStartedAtMs !== null
-        ? pauseStartedAtMs
-        : nowMs
-      : currentItemStoppedAtMs ?? nowMs;
+    const referenceNow = resolveTimerReferenceMs({
+      onAir,
+      isPaused,
+      pauseStartedAtMs,
+      stoppedAtMs: currentItemStoppedAtMs,
+      nowMs,
+    });
 
     const elapsedMs = referenceNow - currentItemStartedAt - currentItemPausedMsTotal;
     return Math.max(0, Math.floor(elapsedMs / 1000));
@@ -602,6 +656,14 @@ function App() {
     setIsSettingsOpen(false);
   }, []);
 
+  const openHelp = useCallback(() => {
+    setIsHelpOpen(true);
+  }, []);
+
+  const closeHelp = useCallback(() => {
+    setIsHelpOpen(false);
+  }, []);
+
   const saveSettings = useCallback(() => {
     setMeetingTitle((previous) => {
       const cleaned = settingsTitleDraft.trim();
@@ -632,14 +694,43 @@ function App() {
         return;
       }
 
+      if (!selectedFile.name.toLowerCase().endsWith(".xlsx")) {
+        setImportInfo("Import fehlgeschlagen: Bitte eine .xlsx-Datei auswählen.");
+        event.target.value = "";
+        return;
+      }
+
+      if (selectedFile.size > maxImportFileSizeBytes) {
+        setImportInfo("Import fehlgeschlagen: Datei ist zu groß (maximal 5 MB).");
+        event.target.value = "";
+        return;
+      }
+
       try {
         const fileBuffer = await selectedFile.arrayBuffer();
         const workbook = XLSX.read(fileBuffer, { type: "array", cellDates: true });
+
+        if (workbook.SheetNames.length === 0 || workbook.SheetNames.length > maxImportSheetCount) {
+          throw new Error("Workbook hat ungültige Anzahl Tabellen.");
+        }
+
         const firstSheetName = workbook.SheetNames[0];
         const firstSheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
 
         if (!firstSheet) {
           throw new Error("Keine Tabelle in der Datei gefunden.");
+        }
+
+        const sheetRef = firstSheet["!ref"];
+        if (!sheetRef) {
+          throw new Error("Ungültiger Tabellenbereich.");
+        }
+
+        const range = XLSX.utils.decode_range(sheetRef);
+        const rowCount = range.e.r - range.s.r + 1;
+        const colCount = range.e.c - range.s.c + 1;
+        if (rowCount * colCount > maxImportCellCount) {
+          throw new Error("Tabelle ist zu groß.");
         }
 
         const importedAgenda = buildImportedAgenda(firstSheet);
@@ -649,10 +740,15 @@ function App() {
           );
         }
 
-        const importedTitle = readCellText(firstSheet, "A1") || meetingTitle;
-        const importedLocation = readCellText(firstSheet, "B2") || readLabeledValue(firstSheet, /ort/i) || meetingLocation;
+        const importedTitle = sanitizeImportedText(readCellText(firstSheet, "A1"), 80) || meetingTitle;
+        const importedLocation =
+          sanitizeImportedText(readCellText(firstSheet, "B2"), 80) ||
+          sanitizeImportedText(readLabeledValue(firstSheet, /ort/i), 80) ||
+          meetingLocation;
         const importedDate =
-          readCellText(firstSheet, "C2") || readLabeledValue(firstSheet, /datum|zeit/i) || meetingDate;
+          sanitizeImportedText(readCellText(firstSheet, "C2"), 80) ||
+          sanitizeImportedText(readLabeledValue(firstSheet, /datum|zeit/i), 80) ||
+          meetingDate;
 
         setAgenda(importedAgenda);
         setMeetingTitle(importedTitle);
@@ -672,10 +768,10 @@ function App() {
         setAsRunFilter("all");
         setNowMs(Date.now());
 
-        setImportInfo(`Importiert: ${selectedFile.name} (${importedAgenda.length} TOPs)`);
+        setImportInfo(`Import erfolgreich (${importedAgenda.length} TOPs).`);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unbekannter Importfehler";
-        setImportInfo(`Import fehlgeschlagen: ${message}`);
+        console.error("Agenda import failed", error);
+        setImportInfo("Import fehlgeschlagen. Bitte Datei und Format prüfen (A=TOP, B=Titel, C=Dauer, D=Tag).");
       } finally {
         event.target.value = "";
       }
@@ -683,15 +779,15 @@ function App() {
     [meetingDate, meetingLocation, meetingTitle],
   );
 
-  const exportAsRunPdf = useCallback(() => {
+  const exportAsRunPdf = useCallback(async () => {
     if (asRunEntries.length === 0) {
       window.alert("Es wurden noch keine Tagesordnungspunkte gesendet.");
       return;
     }
 
-    const document = new jsPDF({ unit: "pt", format: "a4" });
+    const pdfDocument = new jsPDF({ unit: "pt", format: "a4" });
     const margin = 42;
-    const pageHeight = document.internal.pageSize.getHeight();
+    const pageHeight = pdfDocument.internal.pageSize.getHeight();
     const columnTop = margin;
     const columnStart = 300;
     const columnPlanned = 404;
@@ -699,28 +795,33 @@ function App() {
     let cursorY = 52;
 
     const drawTableHeader = (y: number) => {
-      document.setFont("helvetica", "bold");
-      document.setFontSize(11);
-      document.text("TOP", columnTop, y);
-      document.text("Start", columnStart, y);
-      document.text("Geplant", columnPlanned, y);
-      document.text("Ist", columnActual, y);
-      document.setLineWidth(1);
-      document.line(margin, y + 8, 554, y + 8);
+      pdfDocument.setFont("helvetica", "bold");
+      pdfDocument.setFontSize(11);
+      pdfDocument.text("TOP", columnTop, y);
+      pdfDocument.text("Start", columnStart, y);
+      pdfDocument.text("Geplant", columnPlanned, y);
+      pdfDocument.text("Ist", columnActual, y);
+      pdfDocument.setLineWidth(1);
+      pdfDocument.line(margin, y + 8, 554, y + 8);
       return y + 22;
     };
 
-    document.setFont("helvetica", "bold");
-    document.setFontSize(18);
-    document.text("AsRun Log", margin, cursorY);
+    pdfDocument.setFont("helvetica", "bold");
+    pdfDocument.setFontSize(22);
+    pdfDocument.text("Sitzungsbuddy - AsRunLog", margin, cursorY);
+
+    cursorY += 15;
+    pdfDocument.setFont("helvetica", "normal");
+    pdfDocument.setFontSize(10);
+    pdfDocument.text("Sascha Molina, (c) 2026", margin, cursorY);
 
     cursorY += 22;
-    document.setFont("helvetica", "normal");
-    document.setFontSize(11);
-    document.text(`${meetingTitle} · ${meetingDate} · ${meetingLocation}`, margin, cursorY);
+    pdfDocument.setFont("helvetica", "normal");
+    pdfDocument.setFontSize(11);
+    pdfDocument.text(`${meetingTitle} · ${meetingDate} · ${meetingLocation}`, margin, cursorY);
 
     cursorY += 16;
-    document.text(
+    pdfDocument.text(
       `Exportzeit: ${new Date(nowMs).toLocaleString("de-DE", { hour12: false })}`,
       margin,
       cursorY,
@@ -729,30 +830,57 @@ function App() {
     cursorY += 26;
     cursorY = drawTableHeader(cursorY);
 
-    document.setFont("helvetica", "normal");
-    document.setFontSize(10);
+    pdfDocument.setFont("helvetica", "normal");
+    pdfDocument.setFontSize(10);
 
     asRunEntries.forEach((entry) => {
       if (cursorY > pageHeight - 46) {
-        document.addPage();
+        pdfDocument.addPage();
         cursorY = drawTableHeader(52);
-        document.setFont("helvetica", "normal");
-        document.setFontSize(10);
+        pdfDocument.setFont("helvetica", "normal");
+        pdfDocument.setFontSize(10);
       }
 
       const topLabel =
         entry.topLabel.length > 45 ? `${entry.topLabel.slice(0, 42).trimEnd()}…` : entry.topLabel;
 
-      document.text(topLabel, columnTop, cursorY);
-      document.text(entry.startedAtLabel, columnStart, cursorY);
-      document.text(entry.plannedLabel, columnPlanned, cursorY);
-      document.text(entry.actualLabel, columnActual, cursorY);
+      pdfDocument.text(topLabel, columnTop, cursorY);
+      pdfDocument.text(entry.startedAtLabel, columnStart, cursorY);
+      pdfDocument.text(entry.plannedLabel, columnPlanned, cursorY);
+      pdfDocument.text(entry.actualLabel, columnActual, cursorY);
 
       cursorY += 18;
     });
 
     const stamp = new Date(nowMs).toISOString().replace(/[.:]/g, "-");
-    document.save(`asrun-log-${stamp}.pdf`);
+    const defaultFileName = `asrun-log-${stamp}.pdf`;
+
+    try {
+      if (!("__TAURI_INTERNALS__" in window)) {
+        pdfDocument.save(defaultFileName);
+        return;
+      }
+
+      const selectedPath = await save({
+        title: "AsRun Log speichern",
+        defaultPath: defaultFileName,
+        filters: [{ name: "PDF", extensions: ["pdf"] }],
+      });
+
+      if (!selectedPath) {
+        return;
+      }
+
+      const targetPath = ensurePdfExtension(selectedPath);
+      const pdfBuffer = pdfDocument.output("arraybuffer") as ArrayBuffer;
+      await invoke("save_pdf_file", {
+        path: targetPath,
+        base64Data: arrayBufferToBase64(pdfBuffer),
+      });
+    } catch (error) {
+      console.error("PDF export failed", error);
+      window.alert("PDF konnte nicht gespeichert werden.");
+    }
   }, [asRunEntries, meetingDate, meetingLocation, meetingTitle, nowMs]);
 
   const moveFutureItem = useCallback(
@@ -824,7 +952,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || isSettingsOpen || isStopConfirmOpen) {
+      if (event.code !== "Space" || isSettingsOpen || isStopConfirmOpen || isHelpOpen) {
         return;
       }
 
@@ -839,7 +967,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isSettingsOpen, isStopConfirmOpen]);
+  }, [advanceToNextItem, isHelpOpen, isSettingsOpen, isStopConfirmOpen]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -870,6 +998,21 @@ function App() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isStopConfirmOpen]);
+
+  useEffect(() => {
+    if (!isHelpOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsHelpOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isHelpOpen]);
 
   const currentClockLabel = useMemo(() => {
     return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
@@ -1057,7 +1200,7 @@ function App() {
       <input
         ref={importInputRef}
         type="file"
-        accept=".xlsx,.xls"
+        accept=".xlsx"
         className="hiddenFileInput"
         onChange={handleAgendaImport}
       />
@@ -1227,11 +1370,69 @@ function App() {
             </div>
 
             <div className="settingsActions">
+              <button type="button" className="settingsButton ghost" onClick={openHelp}>
+                Hilfe
+              </button>
               <button type="button" className="settingsButton ghost" onClick={closeSettings}>
                 Abbrechen
               </button>
               <button type="button" className="settingsButton" onClick={saveSettings}>
                 Speichern
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isHelpOpen ? (
+        <div className="settingsOverlay" onClick={closeHelp}>
+          <section
+            className="settingsModal helpModal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sitzungsbuddy Hilfe"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Hilfe: Sitzungsbuddy bedienen</h3>
+            <p className="helpIntro">
+              Diese Anleitung erklärt alle Funktionen für den Live-Betrieb mehrtägiger Sitzungen.
+            </p>
+
+            <img src={helpOverviewImage} alt="Übersicht der Sitzungsbuddy Oberfläche" className="helpImage" />
+
+            <h4 className="helpSectionTitle">1) Kopfbereich</h4>
+            <p className="helpText">
+              Links siehst du aktuelle Uhrzeit, Sitzungszeit und Prognose. Rechts stehen aktueller TOP, laufende TOP-Zeit und
+              Countdown.
+            </p>
+
+            <h4 className="helpSectionTitle">2) Session-Steuerung</h4>
+            <p className="helpText">
+              <strong>OnAir</strong> startet oder setzt die Sitzung fort. <strong>Pause</strong> hält Zeiten an (blinkende
+              Zeitboxen). <strong>Stop</strong> beendet die Sitzung nach Sicherheitsabfrage.
+            </p>
+
+            <h4 className="helpSectionTitle">3) Rechte Funktionsknöpfe</h4>
+            <p className="helpText">
+              <strong>Zahnrad</strong> öffnet Einstellungen (Titel, Datum, Ort). <strong>Export</strong> erstellt ein AsRun-PDF
+              und öffnet einen Speichern-Dialog. <strong>Import</strong> lädt eine Agenda aus Excel (.xlsx).
+            </p>
+
+            <h4 className="helpSectionTitle">4) Agenda-Liste</h4>
+            <p className="helpText">
+              Aktueller TOP ist gelb/grün markiert, der nächste TOP orange. Künftige TOPs lassen sich mit Pfeilen
+              umsortieren oder auf Halt setzen.
+            </p>
+
+            <h4 className="helpSectionTitle">5) Tastatur</h4>
+            <p className="helpText">
+              Mit <strong>Leertaste</strong> springst du zum nächsten TOP. Über <strong>Esc</strong> kannst du geöffnete Dialoge
+              schließen.
+            </p>
+
+            <div className="settingsActions">
+              <button type="button" className="settingsButton" onClick={closeHelp}>
+                Schließen
               </button>
             </div>
           </section>

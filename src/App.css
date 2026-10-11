@@ -695,6 +695,37 @@ p {
   margin-bottom: 0.1rem;
 }
 
+.helpModal {
+  width: min(58rem, 100%);
+  max-height: min(90vh, 56rem);
+  overflow: auto;
+}
+
+.helpIntro {
+  color: #36516d;
+  font-size: 0.96rem;
+  line-height: 1.35;
+}
+
+.helpImage {
+  width: 100%;
+  border: 2px solid #9fb3c7;
+  border-radius: 0.7rem;
+  box-shadow: 0 6px 14px rgb(0 0 0 / 12%);
+}
+
+.helpSectionTitle {
+  margin: 0.2rem 0 0;
+  font-size: 1.02rem;
+  color: #12314d;
+}
+
+.helpText {
+  color: #2c4864;
+  font-size: 0.94rem;
+  line-height: 1.35;
+}
+
 @media (max-width: 1400px) {
   .agendaCard h2 {
     font-size: 2.1rem;
