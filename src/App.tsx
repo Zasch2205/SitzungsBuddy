@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { jsPDF } from "jspdf";
+import * as XLSX from "xlsx";
 import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
 import "./App.css";
 
@@ -125,7 +126,110 @@ function stateLabel(state: AgendaState): string {
   }
 }
 
+function readCellText(sheet: XLSX.WorkSheet, address: string): string {
+  const cell = sheet[address];
+  if (!cell || cell.v === null || cell.v === undefined) {
+    return "";
+  }
+
+  if (cell.v instanceof Date) {
+    return cell.v.toLocaleDateString("de-DE");
+  }
+
+  return String(cell.v).trim();
+}
+
+function readLabeledValue(sheet: XLSX.WorkSheet, labelPattern: RegExp): string {
+  for (let row = 1; row <= 25; row += 1) {
+    const leftValue = readCellText(sheet, `A${row}`);
+    if (!labelPattern.test(leftValue)) {
+      continue;
+    }
+
+    const rightB = readCellText(sheet, `B${row}`);
+    const rightC = readCellText(sheet, `C${row}`);
+    return rightB || rightC;
+  }
+
+  return "";
+}
+
+function parseDurationCell(cell?: XLSX.CellObject): number | null {
+  if (!cell || cell.v === null || cell.v === undefined || cell.v === "") {
+    return null;
+  }
+
+  if (typeof cell.v === "number") {
+    if (cell.v > 0 && cell.v < 1) {
+      return Math.round(cell.v * 24 * 60 * 60);
+    }
+
+    if (cell.v >= 1 && cell.v < 1000) {
+      return Math.round(cell.v * 60);
+    }
+  }
+
+  const valueText = String(cell.v).trim();
+  const clockMatch = valueText.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (clockMatch) {
+    const hours = Number(clockMatch[1]);
+    const minutes = Number(clockMatch[2]);
+    const seconds = Number(clockMatch[3] ?? "0");
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  const minutesMatch = valueText.match(/^(\d{1,4})\s*(m|min)$/i);
+  if (minutesMatch) {
+    return Number(minutesMatch[1]) * 60;
+  }
+
+  return null;
+}
+
+function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
+  const imported: AgendaItem[] = [];
+  let blankStreak = 0;
+
+  for (let row = 5; row <= 600; row += 1) {
+    const topValue = readCellText(sheet, `A${row}`);
+    const titleValue = readCellText(sheet, `B${row}`);
+
+    if (!topValue && !titleValue) {
+      blankStreak += 1;
+      if (blankStreak >= 20 && imported.length > 0) {
+        break;
+      }
+      continue;
+    }
+
+    blankStreak = 0;
+
+    if (!topValue || !titleValue) {
+      continue;
+    }
+
+    const durationSec = parseDurationCell(sheet[`C${row}`]) ?? 15 * 60;
+    const dayPrefix = topValue.split(".")[0]?.trim();
+
+    imported.push({
+      id: `import-${row}-${topValue.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
+      day: dayPrefix ? `Tag ${dayPrefix}` : "Tag 1",
+      order: imported.length + 1,
+      top: topValue,
+      title: titleValue,
+      plannedDurationSec: durationSec,
+      state: "planned",
+      actualStartedAtMs: null,
+      actualEndedAtMs: null,
+    });
+  }
+
+  return imported;
+}
+
 function App() {
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
   const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
@@ -141,6 +245,7 @@ function App() {
   const [settingsDateDraft, setSettingsDateDraft] = useState(meetingDate);
   const [settingsLocationDraft, setSettingsLocationDraft] = useState(meetingLocation);
   const [asRunFilter, setAsRunFilter] = useState<AsRunFilter>("all");
+  const [importInfo, setImportInfo] = useState("");
 
   const currentIndex = useMemo(
     () => agenda.findIndex((item) => item.id === currentItemId),
@@ -324,6 +429,62 @@ function App() {
 
     setIsSettingsOpen(false);
   }, [settingsDateDraft, settingsLocationDraft, settingsTitleDraft]);
+
+  const triggerAgendaImport = useCallback(() => {
+    importInputRef.current?.click();
+  }, []);
+
+  const handleAgendaImport = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const selectedFile = event.target.files?.[0];
+      if (!selectedFile) {
+        return;
+      }
+
+      try {
+        const fileBuffer = await selectedFile.arrayBuffer();
+        const workbook = XLSX.read(fileBuffer, { type: "array", cellDates: true });
+        const firstSheetName = workbook.SheetNames[0];
+        const firstSheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
+
+        if (!firstSheet) {
+          throw new Error("Keine Tabelle in der Datei gefunden.");
+        }
+
+        const importedAgenda = buildImportedAgenda(firstSheet);
+        if (importedAgenda.length === 0) {
+          throw new Error(
+            "Keine TOPs gefunden. Erwartet werden TOP-Nummer in Spalte A und Titel in Spalte B ab Zeile 5.",
+          );
+        }
+
+        const importedTitle = readCellText(firstSheet, "A1") || meetingTitle;
+        const importedLocation = readCellText(firstSheet, "B2") || readLabeledValue(firstSheet, /ort/i) || meetingLocation;
+        const importedDate =
+          readCellText(firstSheet, "C2") || readLabeledValue(firstSheet, /datum|zeit/i) || meetingDate;
+
+        setAgenda(importedAgenda);
+        setMeetingTitle(importedTitle);
+        setMeetingDate(importedDate);
+        setMeetingLocation(importedLocation);
+
+        setOnAir(false);
+        setSessionStartedAt(null);
+        setCurrentItemId(null);
+        setCurrentItemStartedAt(null);
+        setAsRunFilter("all");
+        setNowMs(Date.now());
+
+        setImportInfo(`Importiert: ${selectedFile.name} (${importedAgenda.length} TOPs)`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unbekannter Importfehler";
+        setImportInfo(`Import fehlgeschlagen: ${message}`);
+      } finally {
+        event.target.value = "";
+      }
+    },
+    [meetingDate, meetingLocation, meetingTitle],
+  );
 
   const exportAsRunPdf = useCallback(() => {
     if (asRunEntries.length === 0) {
@@ -635,10 +796,32 @@ function App() {
                 <path d="M20 4l-9 9" />
               </svg>
             </button>
+            <button
+              type="button"
+              className="iconButton importButton"
+              onClick={triggerAgendaImport}
+              aria-label="Agenda aus Excel importieren"
+              title="Agenda aus Excel importieren"
+            >
+              <svg className="iconSvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 4v10" />
+                <path d="M8 10l4 4 4-4" />
+                <rect x="4" y="15" width="16" height="5" rx="1.6" />
+              </svg>
+            </button>
             <p className="spaceHint">Leertaste = Nächster TOP</p>
+            {importInfo ? <p className="importHint">{importInfo}</p> : null}
           </aside>
         </div>
       </header>
+
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hiddenFileInput"
+        onChange={handleAgendaImport}
+      />
 
       <section className="agendaScrollArea">
         <article className="asRunCard">
