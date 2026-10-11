@@ -253,6 +253,7 @@ function App() {
   const [meetingDate, setMeetingDate] = useState(defaultMeetingDateLabel);
   const [meetingLocation, setMeetingLocation] = useState("Hamburg");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isStopConfirmOpen, setIsStopConfirmOpen] = useState(false);
   const [settingsTitleDraft, setSettingsTitleDraft] = useState(meetingTitle);
   const [settingsDateDraft, setSettingsDateDraft] = useState(meetingDate);
   const [settingsLocationDraft, setSettingsLocationDraft] = useState(meetingLocation);
@@ -488,8 +489,16 @@ function App() {
       return;
     }
 
-    const shouldStop = window.confirm("Sitzung wirklich beenden?");
-    if (!shouldStop) {
+    setIsStopConfirmOpen(true);
+  }, [isPaused, onAir]);
+
+  const cancelStopSession = useCallback(() => {
+    setIsStopConfirmOpen(false);
+  }, []);
+
+  const confirmStopSession = useCallback(() => {
+    if (!onAir && !isPaused) {
+      setIsStopConfirmOpen(false);
       return;
     }
 
@@ -529,6 +538,7 @@ function App() {
     setCurrentItemStartedAt(null);
     setCurrentItemPausedMsTotal(0);
     setNowMs(timestamp);
+    setIsStopConfirmOpen(false);
   }, [currentItemId, isPaused, onAir, pauseStartedAtMs]);
 
   const openSettings = useCallback(() => {
@@ -764,7 +774,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || isSettingsOpen) {
+      if (event.code !== "Space" || isSettingsOpen || isStopConfirmOpen) {
         return;
       }
 
@@ -779,7 +789,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isSettingsOpen]);
+  }, [advanceToNextItem, isSettingsOpen, isStopConfirmOpen]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -795,6 +805,21 @@ function App() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isSettingsOpen]);
+
+  useEffect(() => {
+    if (!isStopConfirmOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsStopConfirmOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isStopConfirmOpen]);
 
   const currentClockLabel = useMemo(() => {
     return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
@@ -858,6 +883,8 @@ function App() {
     return "deltaGreen";
   }, [prognosisSec, sessionStartedAt]);
 
+  const pausedValueBoxClass = isPaused ? "valueBox pausedBlink" : "valueBox";
+
   return (
     <main className="appShell">
       <header className="freezeHeader">
@@ -920,7 +947,7 @@ function App() {
             <div className="valueBox">{currentClockLabel}</div>
 
             <p className="fieldLabel">Sitzungszeit</p>
-            <div className="valueBox">{formatClock(totalElapsedSec)}</div>
+            <div className={pausedValueBoxClass}>{formatClock(totalElapsedSec)}</div>
 
             <p className={`deltaValue ${prognosisClass}`}>{prognosisLabel}</p>
           </section>
@@ -930,7 +957,7 @@ function App() {
             <div className="topBox">{currentTopLabel}</div>
 
             <p className="fieldLabel">Zeit des TOP</p>
-            <div className="valueBox">{currentItem ? formatClock(currentElapsedSec) : "--:--:--"}</div>
+            <div className={pausedValueBoxClass}>{currentItem ? formatClock(currentElapsedSec) : "--:--:--"}</div>
 
             <p className={`deltaValue ${countdownClass}`}>{countdownLabel}</p>
           </section>
@@ -986,54 +1013,6 @@ function App() {
       />
 
       <section className="agendaScrollArea">
-        <article className="asRunCard">
-          <div className="asRunHead">
-            <div>
-              <h2>Gesendete TOPs</h2>
-              <p>Vorschau für den PDF-Export</p>
-            </div>
-
-            <div className="asRunFilter" role="group" aria-label="AsRun Filter">
-              <button
-                type="button"
-                className={asRunFilter === "completed" ? "asRunFilterButton active" : "asRunFilterButton"}
-                onClick={() => setAsRunFilter("completed")}
-              >
-                Nur fertige TOPs
-              </button>
-              <button
-                type="button"
-                className={asRunFilter === "all" ? "asRunFilterButton active" : "asRunFilterButton"}
-                onClick={() => setAsRunFilter("all")}
-              >
-                inkl. laufendem TOP
-              </button>
-            </div>
-          </div>
-
-          {filteredAsRunEntries.length === 0 ? (
-            <p className="asRunEmpty">
-              {asRunEntries.length === 0
-                ? "Noch keine gesendeten Tagesordnungspunkte."
-                : "Aktuell keine fertigen TOPs in der Ansicht."}
-            </p>
-          ) : (
-            <ul className="asRunList">
-              {filteredAsRunEntries.map((entry) => (
-                <li key={entry.id} className="asRunItem">
-                  <span className="asRunTop">{entry.topLabel}</span>
-                  <span className="asRunCell">Start {entry.startedAtLabel}</span>
-                  <span className="asRunCell">Geplant {entry.plannedLabel}</span>
-                  <span className="asRunCell">Ist {entry.actualLabel}</span>
-                  <span className={entry.isLive ? "asRunBadge live" : "asRunBadge done"}>
-                    {entry.isLive ? "Läuft" : "Fertig"}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </article>
-
         <article className="agendaCard">
           <h2>Agenda</h2>
           <p className="hint">Zukünftige Punkte lassen sich umsortieren oder auf Halt setzen.</p>
@@ -1085,6 +1064,54 @@ function App() {
               );
             })}
           </ul>
+        </article>
+
+        <article className="asRunCard">
+          <div className="asRunHead">
+            <div>
+              <h2>Gesendete TOPs</h2>
+              <p>Vorschau für den PDF-Export</p>
+            </div>
+
+            <div className="asRunFilter" role="group" aria-label="AsRun Filter">
+              <button
+                type="button"
+                className={asRunFilter === "completed" ? "asRunFilterButton active" : "asRunFilterButton"}
+                onClick={() => setAsRunFilter("completed")}
+              >
+                Nur fertige TOPs
+              </button>
+              <button
+                type="button"
+                className={asRunFilter === "all" ? "asRunFilterButton active" : "asRunFilterButton"}
+                onClick={() => setAsRunFilter("all")}
+              >
+                inkl. laufendem TOP
+              </button>
+            </div>
+          </div>
+
+          {filteredAsRunEntries.length === 0 ? (
+            <p className="asRunEmpty">
+              {asRunEntries.length === 0
+                ? "Noch keine gesendeten Tagesordnungspunkte."
+                : "Aktuell keine fertigen TOPs in der Ansicht."}
+            </p>
+          ) : (
+            <ul className="asRunList">
+              {filteredAsRunEntries.map((entry) => (
+                <li key={entry.id} className="asRunItem">
+                  <span className="asRunTop">{entry.topLabel}</span>
+                  <span className="asRunCell">Start {entry.startedAtLabel}</span>
+                  <span className="asRunCell">Geplant {entry.plannedLabel}</span>
+                  <span className="asRunCell">Ist {entry.actualLabel}</span>
+                  <span className={entry.isLive ? "asRunBadge live" : "asRunBadge done"}>
+                    {entry.isLive ? "Läuft" : "Fertig"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </article>
       </section>
 
@@ -1138,6 +1165,29 @@ function App() {
               </button>
               <button type="button" className="settingsButton" onClick={saveSettings}>
                 Speichern
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isStopConfirmOpen ? (
+        <div className="settingsOverlay" onClick={cancelStopSession}>
+          <section
+            className="settingsModal stopConfirmModal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Sitzung beenden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Sitzung beenden?</h3>
+            <p className="stopConfirmText">Soll die laufende Sitzung wirklich beendet werden?</p>
+            <div className="settingsActions">
+              <button type="button" className="settingsButton ghost" onClick={cancelStopSession}>
+                Nein
+              </button>
+              <button type="button" className="settingsButton stopConfirmButton" onClick={confirmStopSession}>
+                Ja
               </button>
             </div>
           </section>

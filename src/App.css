@@ -185,6 +185,22 @@ p {
   justify-content: center;
 }
 
+@keyframes pausedBlink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0.35;
+  }
+}
+
+.pausedBlink {
+  animation: pausedBlink 1s steps(1, end) infinite;
+}
+
 .topBox {
   background: #ffeb4d;
   color: #0f4d84;
@@ -590,6 +606,21 @@ p {
   color: #163350;
   background: #e6eef8;
   border-color: #9cb6d3;
+}
+
+.stopConfirmModal {
+  width: min(24rem, 100%);
+}
+
+.stopConfirmText {
+  font-size: 1rem;
+  color: #21415f;
+  line-height: 1.35;
+}
+
+.settingsButton.stopConfirmButton {
+  border-color: #a5122b;
+  background: #a5122b;
 }
 
 @media (max-width: 1400px) {
