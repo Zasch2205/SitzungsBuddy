@@ -204,8 +204,10 @@ p {
 .topBox {
   background: #ffeb4d;
   color: #0f4d84;
-  font-size: clamp(1.2rem, 2.2vw, 2.2rem);
+  font-size: clamp(1.35rem, 2.45vw, 2.45rem);
   justify-content: flex-start;
+  min-height: 3.85rem;
+  padding-block: 0.4rem;
   padding-inline: 1rem;
   white-space: nowrap;
   overflow: hidden;
@@ -412,7 +414,7 @@ p {
 }
 
 .agendaCard {
-  background: #fff;
+  background: rgb(240 251 242 / 96%);
   border-radius: 1.1rem;
   box-shadow: 0 4px 14px rgb(13 28 46 / 14%);
   padding: 1.1rem;
@@ -442,6 +444,7 @@ p {
 .agendaItem {
   border: 2px solid #c8dcf5;
   border-radius: 0.75rem;
+  background: #fff;
   padding: 0.55rem 0.65rem;
   display: flex;
   justify-content: space-between;
@@ -450,8 +453,58 @@ p {
 }
 
 .agendaItem.current {
-  border-color: #0f4d84;
-  box-shadow: inset 0 0 0 1px #0f4d84;
+  background: #fff9cf;
+  border-color: #d0ba54;
+  box-shadow: inset 0 0 0 1px #d0ba54;
+}
+
+.agendaItem.current .badge {
+  background: #e5f5df;
+  color: #2c6336;
+}
+
+.agendaItem.current .order,
+.agendaItem.current .day,
+.agendaItem.current .top,
+.agendaItem.current .title,
+.agendaItem.current .duration {
+  color: #2c6336;
+}
+
+.agendaItem.next {
+  background: #fff0df;
+  border-color: #efc38c;
+}
+
+.agendaItem.next .badge {
+  background: #fff3e3;
+  color: #885025;
+}
+
+.agendaItem.next .order,
+.agendaItem.next .day,
+.agendaItem.next .top,
+.agendaItem.next .title,
+.agendaItem.next .duration {
+  color: #885025;
+}
+
+.agendaItem.finished {
+  background: #f1f3f6;
+  border-color: #d5dde7;
+}
+
+.agendaItem.finished .badge {
+  background: #e5e9ef;
+  color: #6c7785;
+}
+
+.agendaItem.finished .order,
+.agendaItem.finished .day,
+.agendaItem.finished .top,
+.agendaItem.finished .title,
+.agendaItem.finished .duration {
+  color: #7a8797;
 }
 
 .agendaMeta {
@@ -509,12 +562,16 @@ p {
   display: flex;
   align-items: center;
   gap: 0.35rem;
+  flex-shrink: 0;
 }
 
 .duration {
   color: #506178;
   font-size: 1.75rem;
-  width: 6rem;
+  width: 7.2rem;
+  min-width: 7.2rem;
+  padding-right: 0.95rem;
+  flex: 0 0 7.2rem;
   text-align: right;
 }
 
@@ -621,6 +678,21 @@ p {
 .settingsButton.stopConfirmButton {
   border-color: #a5122b;
   background: #a5122b;
+}
+
+.settingsImprint {
+  border-top: 1px solid #c7d5e5;
+  margin-top: 0.3rem;
+  padding-top: 0.5rem;
+  color: #4d657c;
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+.settingsImprintTitle {
+  font-weight: 700;
+  color: #264765;
+  margin-bottom: 0.1rem;
 }
 
 @media (max-width: 1400px) {

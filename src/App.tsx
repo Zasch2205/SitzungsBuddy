@@ -191,11 +191,54 @@ function parseDurationCell(cell?: XLSX.CellObject): number | null {
   return null;
 }
 
+function parseDayLabel(dayCell: XLSX.CellObject | undefined, topValue: string): string {
+  if (dayCell && dayCell.v !== null && dayCell.v !== undefined && String(dayCell.v).trim() !== "") {
+    if (typeof dayCell.v === "number") {
+      const dayFromNumber = Math.max(1, Math.round(dayCell.v));
+      return `Tag ${dayFromNumber}`;
+    }
+
+    const dayText = String(dayCell.v).trim();
+    const digitMatch = dayText.match(/(\d{1,2})/);
+    if (digitMatch) {
+      return `Tag ${digitMatch[1]}`;
+    }
+
+    if (/erst/i.test(dayText)) {
+      return "Tag 1";
+    }
+
+    if (/zweit/i.test(dayText)) {
+      return "Tag 2";
+    }
+  }
+
+  const topPrefix = topValue.split(".")[0]?.trim();
+  if (topPrefix && /^\d+$/.test(topPrefix)) {
+    return `Tag ${topPrefix}`;
+  }
+
+  return "Tag 1";
+}
+
+function findAgendaStartRow(sheet: XLSX.WorkSheet): number {
+  for (let row = 1; row <= 40; row += 1) {
+    const leftValue = readCellText(sheet, `A${row}`).toLowerCase();
+    const titleValue = readCellText(sheet, `B${row}`).toLowerCase();
+    if (leftValue === "top" && titleValue.includes("titel")) {
+      return row + 1;
+    }
+  }
+
+  return 6;
+}
+
 function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
   const imported: AgendaItem[] = [];
   let blankStreak = 0;
+  const startRow = findAgendaStartRow(sheet);
 
-  for (let row = 5; row <= 600; row += 1) {
+  for (let row = startRow; row <= 600; row += 1) {
     const topValue = readCellText(sheet, `A${row}`);
     const titleValue = readCellText(sheet, `B${row}`);
 
@@ -214,11 +257,11 @@ function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
     }
 
     const durationSec = parseDurationCell(sheet[`C${row}`]) ?? 15 * 60;
-    const dayPrefix = topValue.split(".")[0]?.trim();
+    const dayLabel = parseDayLabel(sheet[`D${row}`], topValue);
 
     imported.push({
       id: `import-${row}-${topValue.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
-      day: dayPrefix ? `Tag ${dayPrefix}` : "Tag 1",
+      day: dayLabel,
       order: imported.length + 1,
       top: topValue,
       title: titleValue,
@@ -235,6 +278,7 @@ function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
 
 function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const appVersion = __APP_VERSION__;
 
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
@@ -266,6 +310,12 @@ function App() {
   );
 
   const currentItem = currentIndex >= 0 ? agenda[currentIndex] : null;
+
+  const nextItemId = useMemo(() => {
+    const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
+    const nextPlanned = agenda.find((item, index) => index >= startIndex && item.state === "planned");
+    return nextPlanned?.id ?? null;
+  }, [agenda, currentIndex]);
 
   const totalElapsedSec = useMemo(() => {
     if (sessionStartedAt === null) {
@@ -595,7 +645,7 @@ function App() {
         const importedAgenda = buildImportedAgenda(firstSheet);
         if (importedAgenda.length === 0) {
           throw new Error(
-            "Keine TOPs gefunden. Erwartet werden TOP-Nummer in Spalte A und Titel in Spalte B ab Zeile 5.",
+            "Keine TOPs gefunden. Erwartet werden TOP in A, Titel in B, Dauer in C und Tag in D (ab Zeile 6).",
           );
         }
 
@@ -1019,13 +1069,23 @@ function App() {
           <ul className="agendaList">
             {agenda.map((item, index) => {
               const isCurrent = item.id === currentItemId;
+              const isNext = item.id === nextItemId;
+              const isFinished = item.state === "done" || item.state === "skipped";
               const isFuture = currentIndex < 0 || index > currentIndex;
               const canMoveUp = isFuture && index > 0;
               const canMoveDown = isFuture && index < agenda.length - 1;
               const canToggleHold = isFuture && (item.state === "planned" || item.state === "hold");
+              const agendaItemClassName = [
+                "agendaItem",
+                isCurrent ? "current" : "",
+                isNext ? "next" : "",
+                isFinished ? "finished" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
 
               return (
-                <li key={item.id} className={isCurrent ? "agendaItem current" : "agendaItem"}>
+                <li key={item.id} className={agendaItemClassName}>
                   <div className="agendaMeta">
                     <span className={`badge state-${item.state}`}>{stateLabel(item.state)}</span>
                     <span className="order">#{item.order}</span>
@@ -1158,6 +1218,13 @@ function App() {
               onChange={(event) => setSettingsLocationDraft(event.currentTarget.value)}
               placeholder="z. B. Hamburg"
             />
+
+            <div className="settingsImprint">
+              <p className="settingsImprintTitle">Impressum</p>
+              <p>Sascha Molina</p>
+              <p>s.molina@ndr.de</p>
+              <p>© 2026 · Version {appVersion}</p>
+            </div>
 
             <div className="settingsActions">
               <button type="button" className="settingsButton ghost" onClick={closeSettings}>
