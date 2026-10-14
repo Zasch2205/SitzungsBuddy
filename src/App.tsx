@@ -1,4 +1,4 @@
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { jsPDF } from "jspdf";
@@ -8,9 +8,11 @@ import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
 import "./App.css";
 
 type AgendaState = "planned" | "live" | "hold" | "done" | "skipped";
+type AgendaKind = "topic" | "break";
 
 type AgendaItem = {
   id: string;
+  kind: AgendaKind;
   day: string;
   order: number;
   top: string;
@@ -37,6 +39,7 @@ type AsRunFilter = "completed" | "all";
 const initialAgenda: AgendaItem[] = [
   {
     id: "d1-1",
+    kind: "topic",
     day: "Tag 1",
     order: 1,
     top: "1",
@@ -49,6 +52,7 @@ const initialAgenda: AgendaItem[] = [
   },
   {
     id: "d1-2",
+    kind: "topic",
     day: "Tag 1",
     order: 2,
     top: "2",
@@ -61,6 +65,7 @@ const initialAgenda: AgendaItem[] = [
   },
   {
     id: "d1-3",
+    kind: "topic",
     day: "Tag 1",
     order: 3,
     top: "3",
@@ -73,6 +78,7 @@ const initialAgenda: AgendaItem[] = [
   },
   {
     id: "d2-1",
+    kind: "topic",
     day: "Tag 2",
     order: 4,
     top: "4",
@@ -205,6 +211,49 @@ function parseDurationCell(cell?: XLSX.CellObject): number | null {
   return null;
 }
 
+function parseDurationInput(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const fullClock = trimmed.match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
+  if (fullClock) {
+    const hours = Number(fullClock[1]);
+    const minutes = Number(fullClock[2]);
+    const seconds = Number(fullClock[3]);
+
+    if (minutes >= 60 || seconds >= 60) {
+      return null;
+    }
+
+    return hours * 3600 + minutes * 60 + seconds;
+  }
+
+  const hourMinuteClock = trimmed.match(/^(\d{1,3}):(\d{2})$/);
+  if (hourMinuteClock) {
+    const hours = Number(hourMinuteClock[1]);
+    const minutes = Number(hourMinuteClock[2]);
+    if (minutes >= 60) {
+      return null;
+    }
+
+    return hours * 3600 + minutes * 60;
+  }
+
+  const minutesWithSuffix = trimmed.match(/^(\d{1,4})\s*(m|min)$/i);
+  if (minutesWithSuffix) {
+    return Number(minutesWithSuffix[1]) * 60;
+  }
+
+  const minutesOnly = trimmed.match(/^(\d{1,4})$/);
+  if (minutesOnly) {
+    return Number(minutesOnly[1]) * 60;
+  }
+
+  return null;
+}
+
 function parseDayLabel(dayCell: XLSX.CellObject | undefined, topValue: string): string {
   if (dayCell && dayCell.v !== null && dayCell.v !== undefined && String(dayCell.v).trim() !== "") {
     if (typeof dayCell.v === "number") {
@@ -275,6 +324,7 @@ function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
 
     imported.push({
       id: `import-${row}-${topValue.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
+      kind: "topic",
       day: dayLabel,
       order: imported.length + 1,
       top: topValue,
@@ -353,6 +403,10 @@ function App() {
   const [settingsLocationDraft, setSettingsLocationDraft] = useState(meetingLocation);
   const [asRunFilter, setAsRunFilter] = useState<AsRunFilter>("all");
   const [importInfo, setImportInfo] = useState("");
+  const [editingDurationItemId, setEditingDurationItemId] = useState<string | null>(null);
+  const [editingDurationValue, setEditingDurationValue] = useState("");
+  const [editingTitleItemId, setEditingTitleItemId] = useState<string | null>(null);
+  const [editingTitleValue, setEditingTitleValue] = useState("");
 
   const currentIndex = useMemo(
     () => agenda.findIndex((item) => item.id === currentItemId),
@@ -440,7 +494,7 @@ function App() {
 
         return {
           id: item.id,
-          topLabel: `${item.top} ${item.title}`,
+          topLabel: item.kind === "break" ? item.title || "Pause" : `${item.top} ${item.title}`,
           startedAtMs,
           startedAtLabel: formatTimeOfDay(startedAtMs),
           plannedLabel: formatClock(item.plannedDurationSec),
@@ -500,6 +554,60 @@ function App() {
     setCurrentItemStartedAt(nextItemId ? timestamp : null);
     setCurrentItemPausedMsTotal(0);
     setCurrentItemStoppedAtMs(nextItemId ? null : timestamp);
+    setNowMs(timestamp);
+  }, [agenda, currentItemId, isPaused, onAir]);
+
+  const rewindToPreviousItem = useCallback(() => {
+    if (!onAir || isPaused) {
+      return;
+    }
+
+    const timestamp = Date.now();
+    const currentIndexInAgenda = currentItemId
+      ? agenda.findIndex((item) => item.id === currentItemId)
+      : agenda.length;
+
+    let previousDoneIndex = -1;
+    for (let index = currentIndexInAgenda - 1; index >= 0; index -= 1) {
+      if (agenda[index].state === "done") {
+        previousDoneIndex = index;
+        break;
+      }
+    }
+
+    if (previousDoneIndex < 0) {
+      return;
+    }
+
+    const previousItem = agenda[previousDoneIndex];
+
+    const updated = agenda.map((item, index) => {
+      if (index === previousDoneIndex) {
+        return {
+          ...item,
+          state: "live" as const,
+          actualEndedAtMs: null,
+        };
+      }
+
+      if (item.id === currentItemId && item.state === "live") {
+        return {
+          ...item,
+          state: "planned" as const,
+          actualStartedAtMs: null,
+          actualEndedAtMs: null,
+          actualPausedMsTotal: 0,
+        };
+      }
+
+      return item;
+    });
+
+    setAgenda(updated);
+    setCurrentItemId(previousItem.id);
+    setCurrentItemStartedAt(previousItem.actualStartedAtMs ?? timestamp);
+    setCurrentItemPausedMsTotal(previousItem.actualPausedMsTotal);
+    setCurrentItemStoppedAtMs(null);
     setNowMs(timestamp);
   }, [agenda, currentItemId, isPaused, onAir]);
 
@@ -765,6 +873,8 @@ function App() {
         setCurrentItemId(null);
         setCurrentItemStartedAt(null);
         setCurrentItemStoppedAtMs(null);
+        setEditingDurationItemId(null);
+        setEditingDurationValue("");
         setAsRunFilter("all");
         setNowMs(Date.now());
 
@@ -942,6 +1052,177 @@ function App() {
     [currentItemId],
   );
 
+  const insertBreakAfterNextItem = useCallback(() => {
+    const timestamp = Date.now();
+
+    setAgenda((previous) => {
+      const currentIndexInPrevious = currentItemId
+        ? previous.findIndex((item) => item.id === currentItemId)
+        : -1;
+
+      const searchStart = currentIndexInPrevious >= 0 ? currentIndexInPrevious + 1 : 0;
+      const nextIndex = previous.findIndex(
+        (item, index) => index >= searchStart && (item.state === "planned" || item.state === "hold"),
+      );
+
+      const insertAt = nextIndex >= 0 ? nextIndex + 1 : previous.length;
+      const anchorItem = previous[Math.max(0, insertAt - 1)];
+
+      const breakItem: AgendaItem = {
+        id: `pause-${timestamp}-${Math.floor(Math.random() * 10000)}`,
+        kind: "break",
+        day: anchorItem?.day ?? "Tag 1",
+        order: 0,
+        top: "PAUSE",
+        title: "Pause",
+        plannedDurationSec: 5 * 60,
+        state: "planned",
+        actualStartedAtMs: null,
+        actualEndedAtMs: null,
+        actualPausedMsTotal: 0,
+      };
+
+      const updated = [...previous.slice(0, insertAt), breakItem, ...previous.slice(insertAt)];
+      return normalizeOrder(updated);
+    });
+
+    setImportInfo("Pause (05:00) wurde eingefügt.");
+  }, [currentItemId]);
+
+  const beginDurationEdit = useCallback((item: AgendaItem) => {
+    if (item.state !== "planned" && item.state !== "hold") {
+      return;
+    }
+
+    setEditingTitleItemId(null);
+    setEditingTitleValue("");
+    setEditingDurationItemId(item.id);
+    setEditingDurationValue(formatClock(item.plannedDurationSec));
+  }, []);
+
+  const cancelDurationEdit = useCallback(() => {
+    setEditingDurationItemId(null);
+    setEditingDurationValue("");
+  }, []);
+
+  const commitDurationEdit = useCallback(
+    (itemId: string) => {
+      if (editingDurationItemId !== itemId) {
+        return;
+      }
+
+      const parsedDurationSec = parseDurationInput(editingDurationValue);
+      if (parsedDurationSec === null || parsedDurationSec <= 0) {
+        window.alert("Ungültige Dauer. Bitte z. B. 00:15:00 oder 15 eingeben.");
+        return;
+      }
+
+      setAgenda((previous) =>
+        previous.map((item) => {
+          if (item.id !== itemId) {
+            return item;
+          }
+
+          if (item.state !== "planned" && item.state !== "hold") {
+            return item;
+          }
+
+          return {
+            ...item,
+            plannedDurationSec: parsedDurationSec,
+          };
+        }),
+      );
+
+      setEditingDurationItemId(null);
+      setEditingDurationValue("");
+    },
+    [editingDurationItemId, editingDurationValue],
+  );
+
+  const handleDurationInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>, itemId: string) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitDurationEdit(itemId);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelDurationEdit();
+      }
+    },
+    [cancelDurationEdit, commitDurationEdit],
+  );
+
+  const beginTitleEdit = useCallback((item: AgendaItem) => {
+    if (item.state !== "planned" && item.state !== "hold") {
+      return;
+    }
+
+    setEditingDurationItemId(null);
+    setEditingDurationValue("");
+    setEditingTitleItemId(item.id);
+    setEditingTitleValue(item.title || "");
+  }, []);
+
+  const cancelTitleEdit = useCallback(() => {
+    setEditingTitleItemId(null);
+    setEditingTitleValue("");
+  }, []);
+
+  const commitTitleEdit = useCallback(
+    (itemId: string) => {
+      if (editingTitleItemId !== itemId) {
+        return;
+      }
+
+      const sanitizedTitle = sanitizeImportedText(editingTitleValue, 180);
+      if (!sanitizedTitle) {
+        window.alert("Ungültiger Text. Bitte einen Titel eingeben.");
+        return;
+      }
+
+      setAgenda((previous) =>
+        previous.map((item) => {
+          if (item.id !== itemId) {
+            return item;
+          }
+
+          if (item.state !== "planned" && item.state !== "hold") {
+            return item;
+          }
+
+          return {
+            ...item,
+            title: sanitizedTitle,
+          };
+        }),
+      );
+
+      setEditingTitleItemId(null);
+      setEditingTitleValue("");
+    },
+    [editingTitleItemId, editingTitleValue],
+  );
+
+  const handleTitleInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>, itemId: string) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitTitleEdit(itemId);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelTitleEdit();
+      }
+    },
+    [cancelTitleEdit, commitTitleEdit],
+  );
+
   useEffect(() => {
     const interval = window.setInterval(() => {
       setNowMs(Date.now());
@@ -962,12 +1243,18 @@ function App() {
       }
 
       event.preventDefault();
+
+      if (event.ctrlKey) {
+        rewindToPreviousItem();
+        return;
+      }
+
       advanceToNextItem();
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isHelpOpen, isSettingsOpen, isStopConfirmOpen]);
+  }, [advanceToNextItem, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -1018,7 +1305,11 @@ function App() {
     return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
   }, [nowMs]);
 
-  const currentTopLabel = currentItem ? `${currentItem.top}. ${currentItem.title}` : "Kein aktiver TOP";
+  const currentTopLabel = currentItem
+    ? currentItem.kind === "break"
+      ? currentItem.title || "Pause"
+      : `${currentItem.top}. ${currentItem.title}`
+    : "Kein aktiver TOP";
 
   const countdownLabel = useMemo(() => {
     if (!currentItem) {
@@ -1156,42 +1447,56 @@ function App() {
           </section>
 
           <aside className="actionColumn">
-            <button
-              type="button"
-              className="iconButton"
-              aria-label="Einstellungen"
-              title="Einstellungen"
-              onClick={openSettings}
-            >
-              ⚙
-            </button>
-            <button
-              type="button"
-              className="iconButton exportButton"
-              onClick={exportAsRunPdf}
-              aria-label="AsRun Log als PDF exportieren"
-              title="AsRun Log als PDF exportieren"
-            >
-              <svg className="iconSvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <rect x="4" y="9" width="14" height="11" rx="2" />
-                <path d="M13 4h7v7" />
-                <path d="M20 4l-9 9" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="iconButton importButton"
-              onClick={triggerAgendaImport}
-              aria-label="Agenda aus Excel importieren"
-              title="Agenda aus Excel importieren"
-            >
-              <svg className="iconSvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M12 4v10" />
-                <path d="M8 10l4 4 4-4" />
-                <rect x="4" y="15" width="16" height="5" rx="1.6" />
-              </svg>
-            </button>
-            <p className="spaceHint">Leertaste = Nächster TOP</p>
+            <div className="actionButtonRow">
+              <button
+                type="button"
+                className="iconButton pauseInsertButton"
+                onClick={insertBreakAfterNextItem}
+                aria-label="Pause unter der nächsten Position einfügen"
+                title="Pause unter der nächsten Position einfügen"
+              >
+                ⏸+
+              </button>
+
+              <div className="actionMainButtons">
+                <button
+                  type="button"
+                  className="iconButton"
+                  aria-label="Einstellungen"
+                  title="Einstellungen"
+                  onClick={openSettings}
+                >
+                  ⚙
+                </button>
+                <button
+                  type="button"
+                  className="iconButton exportButton"
+                  onClick={exportAsRunPdf}
+                  aria-label="AsRun Log als PDF exportieren"
+                  title="AsRun Log als PDF exportieren"
+                >
+                  <svg className="iconSvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <rect x="4" y="9" width="14" height="11" rx="2" />
+                    <path d="M13 4h7v7" />
+                    <path d="M20 4l-9 9" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="iconButton importButton"
+                  onClick={triggerAgendaImport}
+                  aria-label="Agenda aus Excel importieren"
+                  title="Agenda aus Excel importieren"
+                >
+                  <svg className="iconSvg" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 4v10" />
+                    <path d="M8 10l4 4 4-4" />
+                    <rect x="4" y="15" width="16" height="5" rx="1.6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <p className="spaceHint">Leertaste = Nächster TOP · Strg+Leertaste = Zurück</p>
             {importInfo ? <p className="importHint">{importInfo}</p> : null}
           </aside>
         </div>
@@ -1208,18 +1513,24 @@ function App() {
       <section className="agendaScrollArea">
         <article className="agendaCard">
           <h2>Agenda</h2>
-          <p className="hint">Zukünftige Punkte lassen sich umsortieren oder auf Halt setzen.</p>
+          <p className="hint">Zukünftige Punkte lassen sich umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
           <ul className="agendaList">
             {agenda.map((item, index) => {
               const isCurrent = item.id === currentItemId;
               const isNext = item.id === nextItemId;
               const isFinished = item.state === "done" || item.state === "skipped";
+              const isBreakItem = item.kind === "break";
+              const isEditableDuration = item.state === "planned" || item.state === "hold";
+              const isEditableTitle = item.state === "planned" || item.state === "hold";
+              const isEditingDuration = editingDurationItemId === item.id;
+              const isEditingTitle = editingTitleItemId === item.id;
               const isFuture = currentIndex < 0 || index > currentIndex;
               const canMoveUp = isFuture && index > 0;
               const canMoveDown = isFuture && index < agenda.length - 1;
               const canToggleHold = isFuture && (item.state === "planned" || item.state === "hold");
               const agendaItemClassName = [
                 "agendaItem",
+                isBreakItem ? "pauseItem" : "",
                 isCurrent ? "current" : "",
                 isNext ? "next" : "",
                 isFinished ? "finished" : "",
@@ -1227,17 +1538,66 @@ function App() {
                 .filter(Boolean)
                 .join(" ");
 
+              const titleElement = isEditingTitle ? (
+                <input
+                  className="titleInput"
+                  value={editingTitleValue}
+                  onChange={(event) => setEditingTitleValue(event.currentTarget.value)}
+                  onBlur={() => commitTitleEdit(item.id)}
+                  onKeyDown={(event) => handleTitleInputKeyDown(event, item.id)}
+                  autoFocus
+                  aria-label={`Text für Zeile ${item.order} bearbeiten`}
+                />
+              ) : (
+                <span
+                  className={isEditableTitle ? "title editable" : "title"}
+                  onDoubleClick={isEditableTitle ? () => beginTitleEdit(item) : undefined}
+                  title={isEditableTitle ? "Doppelklick zum Bearbeiten" : "Gesendete TOPs sind gesperrt"}
+                >
+                  {item.title}
+                </span>
+              );
+
               return (
                 <li key={item.id} className={agendaItemClassName}>
                   <div className="agendaMeta">
-                    <span className={`badge state-${item.state}`}>{stateLabel(item.state)}</span>
-                    <span className="order">#{item.order}</span>
-                    <span className="day">{item.day}</span>
-                    <span className="top">TOP {item.top}</span>
-                    <span className="title">{item.title}</span>
+                    {isBreakItem ? (
+                      <>
+                        <span className={`badge state-${item.state}`}>Pause</span>
+                        <span className="order">#{item.order}</span>
+                        <span className="day">{item.day}</span>
+                        {titleElement}
+                      </>
+                    ) : (
+                      <>
+                        <span className={`badge state-${item.state}`}>{stateLabel(item.state)}</span>
+                        <span className="order">#{item.order}</span>
+                        <span className="day">{item.day}</span>
+                        <span className="top">TOP {item.top}</span>
+                        {titleElement}
+                      </>
+                    )}
                   </div>
                   <div className="agendaActions">
-                    <span className="duration">{formatClock(item.plannedDurationSec)}</span>
+                    {isEditingDuration ? (
+                      <input
+                        className="durationInput"
+                        value={editingDurationValue}
+                        onChange={(event) => setEditingDurationValue(event.currentTarget.value)}
+                        onBlur={() => commitDurationEdit(item.id)}
+                        onKeyDown={(event) => handleDurationInputKeyDown(event, item.id)}
+                        autoFocus
+                        aria-label={`Dauer für TOP ${item.top} bearbeiten`}
+                      />
+                    ) : (
+                      <span
+                        className={isEditableDuration ? "duration editable" : "duration"}
+                        onDoubleClick={isEditableDuration ? () => beginDurationEdit(item) : undefined}
+                        title={isEditableDuration ? "Doppelklick zum Bearbeiten" : "Gesendete TOPs sind gesperrt"}
+                      >
+                        {formatClock(item.plannedDurationSec)}
+                      </span>
+                    )}
                     <button
                       type="button"
                       className="mini"

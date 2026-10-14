@@ -36,8 +36,8 @@ p {
   top: 0;
   z-index: 10;
   padding: 0.75rem 1.2rem 0.65rem;
-  background: #8ef994;
-  border-bottom: 3px solid #183045;
+  background: linear-gradient(180deg, #56606f 0%, #eff3f9 100%);
+  border-bottom: 3px solid #4a5260;
 }
 
 .headerTopRow {
@@ -65,6 +65,7 @@ p {
   width: 100%;
   height: auto;
   display: block;
+  filter: grayscale(0.55) saturate(0.5) hue-rotate(165deg) brightness(0.95) contrast(1.05);
 }
 
 .dateArea {
@@ -89,6 +90,8 @@ p {
   font-size: clamp(2rem, 4.2vw, 3.8rem);
   letter-spacing: 0.03em;
   line-height: 1;
+  color: #fff;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 45%);
 }
 
 .sessionControlGroup {
@@ -143,7 +146,7 @@ p {
 
 .headerDivider {
   margin: 0.45rem 0 0.62rem;
-  border-bottom: 3px solid #183045;
+  border-bottom: 3px solid #5a6373;
 }
 
 .statusLayout {
@@ -242,6 +245,18 @@ p {
   padding-top: 0.45rem;
 }
 
+.actionButtonRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.actionMainButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
 .iconButton {
   border: 3px solid #0f1d2d;
   background: #a8b6c4;
@@ -263,6 +278,12 @@ p {
 .iconButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.pauseInsertButton {
+  background: #f3e7ab;
+  color: #1f2328;
+  font-size: 1.45rem;
 }
 
 .exportButton {
@@ -507,6 +528,46 @@ p {
   color: #7a8797;
 }
 
+.agendaItem.pauseItem,
+.agendaItem.pauseItem.current,
+.agendaItem.pauseItem.next,
+.agendaItem.pauseItem.finished {
+  background: #ffea4d;
+  border-color: #d6b600;
+  box-shadow: none;
+}
+
+.agendaItem.pauseItem .badge,
+.agendaItem.pauseItem.current .badge,
+.agendaItem.pauseItem.next .badge,
+.agendaItem.pauseItem.finished .badge {
+  background: #ffd800;
+  color: #141414;
+}
+
+.agendaItem.pauseItem .order,
+.agendaItem.pauseItem .day,
+.agendaItem.pauseItem .top,
+.agendaItem.pauseItem .title,
+.agendaItem.pauseItem .duration,
+.agendaItem.pauseItem.current .order,
+.agendaItem.pauseItem.current .day,
+.agendaItem.pauseItem.current .top,
+.agendaItem.pauseItem.current .title,
+.agendaItem.pauseItem.current .duration,
+.agendaItem.pauseItem.next .order,
+.agendaItem.pauseItem.next .day,
+.agendaItem.pauseItem.next .top,
+.agendaItem.pauseItem.next .title,
+.agendaItem.pauseItem.next .duration,
+.agendaItem.pauseItem.finished .order,
+.agendaItem.pauseItem.finished .day,
+.agendaItem.pauseItem.finished .top,
+.agendaItem.pauseItem.finished .title,
+.agendaItem.pauseItem.finished .duration {
+  color: #141414;
+}
+
 .agendaMeta {
   display: flex;
   gap: 0.45rem;
@@ -558,6 +619,31 @@ p {
   font-weight: 700;
 }
 
+.title.editable {
+  cursor: text;
+  border-radius: 0.45rem;
+  padding-inline: 0.2rem;
+}
+
+.title.editable:hover {
+  background: rgb(15 77 132 / 10%);
+}
+
+.titleInput {
+  min-width: 15.5rem;
+  border: 2px solid #0f4d84;
+  border-radius: 0.45rem;
+  background: #fff;
+  color: #173049;
+  font-size: 1.3rem;
+  font-weight: 700;
+  padding: 0.24rem 0.45rem;
+}
+
+.titleInput:focus {
+  outline: 3px solid rgb(15 77 132 / 25%);
+}
+
 .agendaActions {
   display: flex;
   align-items: center;
@@ -573,6 +659,34 @@ p {
   padding-right: 0.95rem;
   flex: 0 0 7.2rem;
   text-align: right;
+}
+
+.duration.editable {
+  cursor: text;
+  border-radius: 0.45rem;
+  padding-block: 0.12rem;
+}
+
+.duration.editable:hover {
+  background: rgb(15 77 132 / 10%);
+}
+
+.durationInput {
+  width: 7.2rem;
+  min-width: 7.2rem;
+  flex: 0 0 7.2rem;
+  border: 2px solid #0f4d84;
+  border-radius: 0.45rem;
+  background: #fff;
+  color: #173049;
+  font-size: 1.2rem;
+  font-weight: 700;
+  text-align: right;
+  padding: 0.28rem 0.55rem;
+}
+
+.durationInput:focus {
+  outline: 3px solid rgb(15 77 132 / 25%);
 }
 
 .mini {
@@ -765,6 +879,10 @@ p {
   .actionColumn {
     align-items: center;
     padding-top: 0;
+  }
+
+  .actionButtonRow {
+    align-items: center;
   }
 
   .spaceHint {
