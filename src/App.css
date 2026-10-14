@@ -287,6 +287,11 @@ p {
   filter: brightness(0.96);
 }
 
+.iconButton:focus-visible {
+  outline: 3px solid rgb(15 77 132 / 35%);
+  outline-offset: 2px;
+}
+
 .iconButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -798,6 +803,14 @@ p {
   color: #163350;
   background: #e6eef8;
   border-color: #9cb6d3;
+}
+
+.settingsButton:focus-visible,
+.miniSessionButton:focus-visible,
+.mini:focus-visible,
+.onAirButton:focus-visible {
+  outline: 3px solid rgb(15 77 132 / 35%);
+  outline-offset: 2px;
 }
 
 .stopConfirmModal {

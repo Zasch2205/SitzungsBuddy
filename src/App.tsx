@@ -5,6 +5,7 @@ import { jsPDF } from "jspdf";
 import readXlsxFile, { type Sheet as ImportedSheet } from "read-excel-file/browser";
 import helpOverviewImage from "./assets/help-overview.png";
 import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
+import { fnv1aHash } from "./lib/checksum";
 import "./App.css";
 
 type AgendaState = "planned" | "live" | "hold" | "done" | "skipped";
@@ -93,11 +94,18 @@ const initialAgenda: AgendaItem[] = [
 ];
 
 const movableStates: AgendaState[] = ["planned", "hold"];
+const defaultMeetingTitle = "135. PTKO";
+const defaultMeetingSubtitle = "";
 const defaultMeetingDateLabel = "01. Oktober";
+const defaultMeetingLocation = "Hamburg";
 const maxImportFileSizeBytes = 5 * 1024 * 1024;
 const maxImportSheetCount = 5;
 const maxImportCellCount = 20_000;
+const maxImportDurationSec = 12 * 60 * 60;
+const maxAgendaTopLength = 32;
+const maxAgendaTitleLength = 180;
 const savedSessionStorageKey = "sitzungsbuddy.saved-session.v1";
+const savedSessionSchemaVersion = 1;
 
 type PersistedSession = {
   savedAtMs: number;
@@ -116,6 +124,12 @@ type PersistedSession = {
   meetingSubtitle: string;
   meetingDate: string;
   meetingLocation: string;
+};
+
+type PersistedSessionEnvelope = {
+  schemaVersion: number;
+  checksum: string;
+  payload: PersistedSession;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -200,6 +214,51 @@ function parseSavedAgenda(rawAgenda: unknown): AgendaItem[] | null {
   return agenda;
 }
 
+function normalizePersistedSession(rawRecord: Record<string, unknown>): PersistedSession | null {
+  const agenda = parseSavedAgenda(rawRecord.agenda);
+  if (!agenda) {
+    return null;
+  }
+
+  const parsedCurrentItemId =
+    typeof rawRecord.currentItemId === "string" && agenda.some((item) => item.id === rawRecord.currentItemId)
+      ? rawRecord.currentItemId
+      : null;
+
+  const onAir = Boolean(rawRecord.onAir) && parsedCurrentItemId !== null;
+  const isPaused = onAir ? Boolean(rawRecord.isPaused) : false;
+  const pauseStartedAtMs = isPaused ? readNullableNumber(rawRecord.pauseStartedAtMs) : null;
+
+  return {
+    savedAtMs: readNullableNumber(rawRecord.savedAtMs) ?? Date.now(),
+    agenda,
+    onAir,
+    isPaused,
+    pauseStartedAtMs,
+    sessionPausedMsTotal: readNonNegativeNumber(rawRecord.sessionPausedMsTotal, 0),
+    currentItemPausedMsTotal: readNonNegativeNumber(rawRecord.currentItemPausedMsTotal, 0),
+    sessionStoppedAtMs: readNullableNumber(rawRecord.sessionStoppedAtMs),
+    currentItemStoppedAtMs: readNullableNumber(rawRecord.currentItemStoppedAtMs),
+    sessionStartedAt: readNullableNumber(rawRecord.sessionStartedAt),
+    currentItemId: parsedCurrentItemId,
+    currentItemStartedAt: parsedCurrentItemId ? readNullableNumber(rawRecord.currentItemStartedAt) : null,
+    meetingTitle: sanitizeImportedText(String(rawRecord.meetingTitle ?? defaultMeetingTitle), 120) || defaultMeetingTitle,
+    meetingSubtitle: sanitizeImportedText(String(rawRecord.meetingSubtitle ?? defaultMeetingSubtitle), 160),
+    meetingDate: sanitizeImportedText(String(rawRecord.meetingDate ?? defaultMeetingDateLabel), 80) || defaultMeetingDateLabel,
+    meetingLocation: sanitizeImportedText(String(rawRecord.meetingLocation ?? defaultMeetingLocation), 120) || defaultMeetingLocation,
+  };
+}
+
+function buildPersistedSessionEnvelope(payload: PersistedSession): PersistedSessionEnvelope {
+  const payloadJson = JSON.stringify(payload);
+
+  return {
+    schemaVersion: savedSessionSchemaVersion,
+    checksum: fnv1aHash(payloadJson),
+    payload,
+  };
+}
+
 function parseSavedSession(rawValue: string | null): PersistedSession | null {
   if (!rawValue) {
     return null;
@@ -211,38 +270,23 @@ function parseSavedSession(rawValue: string | null): PersistedSession | null {
       return null;
     }
 
-    const agenda = parseSavedAgenda(parsedRaw.agenda);
-    if (!agenda) {
-      return null;
+    const maybeEnvelope = parsedRaw as Record<string, unknown>;
+    if (isRecord(maybeEnvelope.payload)) {
+      const schemaVersion = readNonNegativeNumber(maybeEnvelope.schemaVersion, -1);
+      const checksum = typeof maybeEnvelope.checksum === "string" ? maybeEnvelope.checksum : "";
+      if (schemaVersion !== savedSessionSchemaVersion || !checksum) {
+        return null;
+      }
+
+      const payloadJson = JSON.stringify(maybeEnvelope.payload);
+      if (fnv1aHash(payloadJson) !== checksum) {
+        return null;
+      }
+
+      return normalizePersistedSession(maybeEnvelope.payload);
     }
 
-    const parsedCurrentItemId =
-      typeof parsedRaw.currentItemId === "string" && agenda.some((item) => item.id === parsedRaw.currentItemId)
-        ? parsedRaw.currentItemId
-        : null;
-
-    const onAir = Boolean(parsedRaw.onAir) && parsedCurrentItemId !== null;
-    const isPaused = onAir ? Boolean(parsedRaw.isPaused) : false;
-    const pauseStartedAtMs = isPaused ? readNullableNumber(parsedRaw.pauseStartedAtMs) : null;
-
-    return {
-      savedAtMs: readNullableNumber(parsedRaw.savedAtMs) ?? Date.now(),
-      agenda,
-      onAir,
-      isPaused,
-      pauseStartedAtMs,
-      sessionPausedMsTotal: readNonNegativeNumber(parsedRaw.sessionPausedMsTotal, 0),
-      currentItemPausedMsTotal: readNonNegativeNumber(parsedRaw.currentItemPausedMsTotal, 0),
-      sessionStoppedAtMs: readNullableNumber(parsedRaw.sessionStoppedAtMs),
-      currentItemStoppedAtMs: readNullableNumber(parsedRaw.currentItemStoppedAtMs),
-      sessionStartedAt: readNullableNumber(parsedRaw.sessionStartedAt),
-      currentItemId: parsedCurrentItemId,
-      currentItemStartedAt: parsedCurrentItemId ? readNullableNumber(parsedRaw.currentItemStartedAt) : null,
-      meetingTitle: sanitizeImportedText(String(parsedRaw.meetingTitle ?? "135. PTKO"), 120) || "135. PTKO",
-      meetingSubtitle: sanitizeImportedText(String(parsedRaw.meetingSubtitle ?? ""), 160),
-      meetingDate: sanitizeImportedText(String(parsedRaw.meetingDate ?? defaultMeetingDateLabel), 80) || defaultMeetingDateLabel,
-      meetingLocation: sanitizeImportedText(String(parsedRaw.meetingLocation ?? "Hamburg"), 120) || "Hamburg",
-    };
+    return normalizePersistedSession(maybeEnvelope);
   } catch {
     return null;
   }
@@ -250,6 +294,27 @@ function parseSavedSession(rawValue: string | null): PersistedSession | null {
 
 function normalizeOrder(items: AgendaItem[]): AgendaItem[] {
   return items.map((item, index) => ({ ...item, order: index + 1 }));
+}
+
+function hasSameAgendaBlueprint(left: AgendaItem[], right: AgendaItem[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((item, index) => {
+    const candidate = right[index];
+    if (!candidate) {
+      return false;
+    }
+
+    return (
+      item.kind === candidate.kind &&
+      item.day === candidate.day &&
+      item.top === candidate.top &&
+      item.title === candidate.title &&
+      item.plannedDurationSec === candidate.plannedDurationSec
+    );
+  });
 }
 
 function formatClock(seconds: number): string {
@@ -490,6 +555,26 @@ function findAgendaStartRow(sheet: ImportedSheetData): number {
   return 6;
 }
 
+function hasUnexpectedAgendaColumns(sheet: ImportedSheetData, row: number): boolean {
+  const rowValues = sheet[row - 1];
+  if (!Array.isArray(rowValues)) {
+    return false;
+  }
+
+  for (let columnIndex = 4; columnIndex < rowValues.length; columnIndex += 1) {
+    const value = rowValues[columnIndex];
+    if (value === null || value === undefined) {
+      continue;
+    }
+
+    if (String(value).trim() !== "") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
   const imported: AgendaItem[] = [];
   let blankStreak = 0;
@@ -513,7 +598,23 @@ function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
       continue;
     }
 
+    if (hasUnexpectedAgendaColumns(sheet, row)) {
+      throw new Error(`Unerwartete Daten in Spalten rechts von D (Zeile ${row}).`);
+    }
+
+    if (topValue.length > maxAgendaTopLength) {
+      throw new Error(`TOP-Nummer in Zeile ${row} ist zu lang (max. ${maxAgendaTopLength} Zeichen).`);
+    }
+
+    if (titleValue.length > maxAgendaTitleLength) {
+      throw new Error(`TOP-Titel in Zeile ${row} ist zu lang (max. ${maxAgendaTitleLength} Zeichen).`);
+    }
+
     const durationSec = parseDurationCell(getCellValue(sheet, row, 3)) ?? 15 * 60;
+    if (durationSec <= 0 || durationSec > maxImportDurationSec) {
+      throw new Error(`Ungültige TOP-Dauer in Zeile ${row}.`);
+    }
+
     const dayLabel = parseDayLabel(getCellValue(sheet, row, 4), topValue);
 
     imported.push({
@@ -586,10 +687,10 @@ function App() {
   const [currentItemStartedAt, setCurrentItemStartedAt] = useState<number | null>(null);
   const [nowMs, setNowMs] = useState<number>(Date.now());
 
-  const [meetingTitle, setMeetingTitle] = useState("135. PTKO");
-  const [meetingSubtitle, setMeetingSubtitle] = useState("");
+  const [meetingTitle, setMeetingTitle] = useState(defaultMeetingTitle);
+  const [meetingSubtitle, setMeetingSubtitle] = useState(defaultMeetingSubtitle);
   const [meetingDate, setMeetingDate] = useState(defaultMeetingDateLabel);
-  const [meetingLocation, setMeetingLocation] = useState("Hamburg");
+  const [meetingLocation, setMeetingLocation] = useState(defaultMeetingLocation);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isStopConfirmOpen, setIsStopConfirmOpen] = useState(false);
@@ -719,7 +820,8 @@ function App() {
 
   const persistSessionSnapshot = useCallback((snapshot: PersistedSession): boolean => {
     try {
-      window.localStorage.setItem(savedSessionStorageKey, JSON.stringify(snapshot));
+      const envelope = buildPersistedSessionEnvelope(snapshot);
+      window.localStorage.setItem(savedSessionStorageKey, JSON.stringify(envelope));
       return true;
     } catch {
       window.alert("Sitzungsstand konnte nicht gespeichert werden.");
@@ -777,6 +879,7 @@ function App() {
     const parsed = parseSavedSession(rawValue);
     if (!parsed) {
       clearSavedSession();
+      setImportInfo("Gespeicherter Sitzungsstand war ungültig und wurde aus Sicherheitsgründen verworfen.");
       return;
     }
 
@@ -1097,6 +1200,33 @@ function App() {
     setIsSettingsOpen(false);
   }, [settingsDateDraft, settingsLocationDraft, settingsTitleDraft]);
 
+  const hasSessionRuntimeData = useMemo(() => {
+    if (onAir || isPaused || sessionStartedAt !== null || currentItemId !== null) {
+      return true;
+    }
+
+    return agenda.some(
+      (item) =>
+        item.state !== "planned" ||
+        item.actualStartedAtMs !== null ||
+        item.actualEndedAtMs !== null ||
+        item.actualPausedMsTotal > 0,
+    );
+  }, [agenda, currentItemId, isPaused, onAir, sessionStartedAt]);
+
+  const hasCustomizedAgendaSetup = useMemo(() => {
+    if (!hasSameAgendaBlueprint(agenda, initialAgenda)) {
+      return true;
+    }
+
+    return (
+      meetingTitle !== defaultMeetingTitle ||
+      meetingSubtitle !== defaultMeetingSubtitle ||
+      meetingDate !== defaultMeetingDateLabel ||
+      meetingLocation !== defaultMeetingLocation
+    );
+  }, [agenda, meetingDate, meetingLocation, meetingSubtitle, meetingTitle]);
+
   const triggerAgendaImport = useCallback(() => {
     importInputRef.current?.click();
   }, []);
@@ -1118,6 +1248,26 @@ function App() {
         setImportInfo("Import fehlgeschlagen: Datei ist zu groß (maximal 5 MB).");
         event.target.value = "";
         return;
+      }
+
+      if (hasSessionRuntimeData) {
+        const shouldOverwriteRuntimeData = window.confirm(
+          "Es liegen bereits laufende oder gesendete Sitzungsdaten vor. Soll der Import diese Daten wirklich überschreiben?",
+        );
+
+        if (!shouldOverwriteRuntimeData) {
+          event.target.value = "";
+          return;
+        }
+      } else if (hasCustomizedAgendaSetup || savedSessionCandidate !== null) {
+        const shouldOverwritePlannedData = window.confirm(
+          "Es liegen bereits konfigurierte Sitzungsdaten vor. Soll der Import diese Planung überschreiben?",
+        );
+
+        if (!shouldOverwritePlannedData) {
+          event.target.value = "";
+          return;
+        }
       }
 
       try {
@@ -1164,6 +1314,8 @@ function App() {
         setMeetingSubtitle(importedSubtitle);
         setMeetingDate(importedDate);
         setMeetingLocation(importedLocation);
+        clearSavedSession();
+        setSavedSessionCandidate(null);
 
         setOnAir(false);
         setIsPaused(false);
@@ -1188,7 +1340,15 @@ function App() {
         event.target.value = "";
       }
     },
-    [meetingDate, meetingLocation, meetingTitle],
+    [
+      hasCustomizedAgendaSetup,
+      hasSessionRuntimeData,
+      meetingDate,
+      meetingLocation,
+      meetingTitle,
+      savedSessionCandidate,
+      clearSavedSession,
+    ],
   );
 
   const exportAsRunPdf = useCallback(async () => {
