@@ -84,6 +84,10 @@ p {
 
 .titleArea {
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
 }
 
 .titleArea h1 {
@@ -92,6 +96,14 @@ p {
   line-height: 1;
   color: #fff;
   text-shadow: 0 1px 2px rgb(0 0 0 / 45%);
+}
+
+.meetingSubtitle {
+  color: #fff;
+  font-size: clamp(0.98rem, 1.62vw, 1.38rem);
+  font-weight: 700;
+  line-height: 1.1;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 35%);
 }
 
 .sessionControlGroup {
@@ -278,6 +290,14 @@ p {
 .iconButton:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.settingsIconButton {
+  background: #6f7f90;
+  color: #f3f8ff;
+  font-size: 2.6rem;
+  line-height: 1;
+  font-weight: 900;
 }
 
 .pauseInsertButton {
@@ -758,6 +778,7 @@ p {
 .settingsActions {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.55rem;
   margin-top: 0.35rem;
 }
@@ -780,7 +801,11 @@ p {
 }
 
 .stopConfirmModal {
-  width: min(24rem, 100%);
+  width: min(31rem, 100%);
+}
+
+.resumePromptModal {
+  width: min(31rem, 100%);
 }
 
 .stopConfirmText {
@@ -797,16 +822,44 @@ p {
 .settingsImprint {
   border-top: 1px solid #c7d5e5;
   margin-top: 0.3rem;
-  padding-top: 0.5rem;
-  color: #4d657c;
-  font-size: 0.82rem;
-  line-height: 1.25;
+  padding-top: 0.6rem;
+  color: #3f5872;
+  font-size: 0.8rem;
+  line-height: 1.32;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .settingsImprintTitle {
   font-weight: 700;
+  color: #173d63;
+  margin-bottom: 0.15rem;
+}
+
+.settingsImprintNotice {
+  margin-top: 0.2rem;
   color: #264765;
-  margin-bottom: 0.1rem;
+  font-size: 0.78rem;
+}
+
+.settingsVersionBlock {
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+  border-top: 1px dashed #c7d5e5;
+}
+
+.settingsVersionTitle {
+  color: #173d63;
+  font-weight: 700;
+}
+
+.settingsVersionLine {
+  color: #294963;
+}
+
+.settingsVersionNumber {
+  font-weight: 800;
 }
 
 .helpModal {
@@ -828,6 +881,11 @@ p {
   box-shadow: 0 6px 14px rgb(0 0 0 / 12%);
 }
 
+.helpCaption {
+  font-size: 0.8rem;
+  color: #4a6682;
+}
+
 .helpSectionTitle {
   margin: 0.2rem 0 0;
   font-size: 1.02rem;
@@ -837,7 +895,7 @@ p {
 .helpText {
   color: #2c4864;
   font-size: 0.94rem;
-  line-height: 1.35;
+  line-height: 1.42;
 }
 
 @media (max-width: 1400px) {

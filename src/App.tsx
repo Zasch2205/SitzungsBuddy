@@ -96,6 +96,156 @@ const defaultMeetingDateLabel = "01. Oktober";
 const maxImportFileSizeBytes = 5 * 1024 * 1024;
 const maxImportSheetCount = 5;
 const maxImportCellCount = 20_000;
+const savedSessionStorageKey = "sitzungsbuddy.saved-session.v1";
+
+type PersistedSession = {
+  savedAtMs: number;
+  agenda: AgendaItem[];
+  onAir: boolean;
+  isPaused: boolean;
+  pauseStartedAtMs: number | null;
+  sessionPausedMsTotal: number;
+  currentItemPausedMsTotal: number;
+  sessionStoppedAtMs: number | null;
+  currentItemStoppedAtMs: number | null;
+  sessionStartedAt: number | null;
+  currentItemId: string | null;
+  currentItemStartedAt: number | null;
+  meetingTitle: string;
+  meetingSubtitle: string;
+  meetingDate: string;
+  meetingLocation: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readNullableNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value;
+}
+
+function readNonNegativeNumber(value: unknown, fallback = 0): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return fallback;
+  }
+
+  return value;
+}
+
+function parseSavedAgenda(rawAgenda: unknown): AgendaItem[] | null {
+  if (!Array.isArray(rawAgenda) || rawAgenda.length === 0) {
+    return null;
+  }
+
+  const parsed = rawAgenda.map((rawItem, index) => {
+    if (!isRecord(rawItem)) {
+      return null;
+    }
+
+    const itemId = sanitizeImportedText(String(rawItem.id ?? ""), 90);
+    if (!itemId) {
+      return null;
+    }
+
+    const kind: AgendaKind = rawItem.kind === "break" ? "break" : "topic";
+    const state: AgendaState =
+      rawItem.state === "live" ||
+      rawItem.state === "hold" ||
+      rawItem.state === "done" ||
+      rawItem.state === "skipped" ||
+      rawItem.state === "planned"
+        ? rawItem.state
+        : "planned";
+
+    const day = sanitizeImportedText(String(rawItem.day ?? "Tag 1"), 64) || "Tag 1";
+    const topFallback = kind === "break" ? "PAUSE" : String(index + 1);
+    const top = sanitizeImportedText(String(rawItem.top ?? topFallback), 64) || topFallback;
+    const titleFallback = kind === "break" ? "Pause" : `TOP ${top}`;
+    const title = sanitizeImportedText(String(rawItem.title ?? titleFallback), 200) || titleFallback;
+
+    const durationSec = Math.round(readNonNegativeNumber(rawItem.plannedDurationSec, 300));
+    const plannedDurationSec = Math.max(60, durationSec);
+
+    return {
+      id: itemId,
+      kind,
+      day,
+      order: index + 1,
+      top,
+      title,
+      plannedDurationSec,
+      state,
+      actualStartedAtMs: readNullableNumber(rawItem.actualStartedAtMs),
+      actualEndedAtMs: readNullableNumber(rawItem.actualEndedAtMs),
+      actualPausedMsTotal: readNonNegativeNumber(rawItem.actualPausedMsTotal, 0),
+    } satisfies AgendaItem;
+  });
+
+  if (parsed.some((item) => item === null)) {
+    return null;
+  }
+
+  const agenda = parsed as AgendaItem[];
+  const uniqueIds = new Set(agenda.map((item) => item.id));
+  if (uniqueIds.size !== agenda.length) {
+    return null;
+  }
+
+  return agenda;
+}
+
+function parseSavedSession(rawValue: string | null): PersistedSession | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsedRaw: unknown = JSON.parse(rawValue);
+    if (!isRecord(parsedRaw)) {
+      return null;
+    }
+
+    const agenda = parseSavedAgenda(parsedRaw.agenda);
+    if (!agenda) {
+      return null;
+    }
+
+    const parsedCurrentItemId =
+      typeof parsedRaw.currentItemId === "string" && agenda.some((item) => item.id === parsedRaw.currentItemId)
+        ? parsedRaw.currentItemId
+        : null;
+
+    const onAir = Boolean(parsedRaw.onAir) && parsedCurrentItemId !== null;
+    const isPaused = onAir ? Boolean(parsedRaw.isPaused) : false;
+    const pauseStartedAtMs = isPaused ? readNullableNumber(parsedRaw.pauseStartedAtMs) : null;
+
+    return {
+      savedAtMs: readNullableNumber(parsedRaw.savedAtMs) ?? Date.now(),
+      agenda,
+      onAir,
+      isPaused,
+      pauseStartedAtMs,
+      sessionPausedMsTotal: readNonNegativeNumber(parsedRaw.sessionPausedMsTotal, 0),
+      currentItemPausedMsTotal: readNonNegativeNumber(parsedRaw.currentItemPausedMsTotal, 0),
+      sessionStoppedAtMs: readNullableNumber(parsedRaw.sessionStoppedAtMs),
+      currentItemStoppedAtMs: readNullableNumber(parsedRaw.currentItemStoppedAtMs),
+      sessionStartedAt: readNullableNumber(parsedRaw.sessionStartedAt),
+      currentItemId: parsedCurrentItemId,
+      currentItemStartedAt: parsedCurrentItemId ? readNullableNumber(parsedRaw.currentItemStartedAt) : null,
+      meetingTitle: sanitizeImportedText(String(parsedRaw.meetingTitle ?? "135. PTKO"), 120) || "135. PTKO",
+      meetingSubtitle: sanitizeImportedText(String(parsedRaw.meetingSubtitle ?? ""), 160),
+      meetingDate: sanitizeImportedText(String(parsedRaw.meetingDate ?? defaultMeetingDateLabel), 80) || defaultMeetingDateLabel,
+      meetingLocation: sanitizeImportedText(String(parsedRaw.meetingLocation ?? "Hamburg"), 120) || "Hamburg",
+    };
+  } catch {
+    return null;
+  }
+}
 
 function normalizeOrder(items: AgendaItem[]): AgendaItem[] {
   return items.map((item, index) => ({ ...item, order: index + 1 }));
@@ -393,6 +543,7 @@ function App() {
   const [nowMs, setNowMs] = useState<number>(Date.now());
 
   const [meetingTitle, setMeetingTitle] = useState("135. PTKO");
+  const [meetingSubtitle, setMeetingSubtitle] = useState("");
   const [meetingDate, setMeetingDate] = useState(defaultMeetingDateLabel);
   const [meetingLocation, setMeetingLocation] = useState("Hamburg");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -407,6 +558,7 @@ function App() {
   const [editingDurationValue, setEditingDurationValue] = useState("");
   const [editingTitleItemId, setEditingTitleItemId] = useState<string | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState("");
+  const [savedSessionCandidate, setSavedSessionCandidate] = useState<PersistedSession | null>(null);
 
   const currentIndex = useMemo(
     () => agenda.findIndex((item) => item.id === currentItemId),
@@ -512,6 +664,80 @@ function App() {
 
     return asRunEntries;
   }, [asRunEntries, asRunFilter]);
+
+  const clearSavedSession = useCallback(() => {
+    try {
+      window.localStorage.removeItem(savedSessionStorageKey);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  const persistSessionSnapshot = useCallback((snapshot: PersistedSession): boolean => {
+    try {
+      window.localStorage.setItem(savedSessionStorageKey, JSON.stringify(snapshot));
+      return true;
+    } catch {
+      window.alert("Sitzungsstand konnte nicht gespeichert werden.");
+      return false;
+    }
+  }, []);
+
+  const restoreSavedSession = useCallback(() => {
+    if (!savedSessionCandidate) {
+      return;
+    }
+
+    setAgenda(normalizeOrder(savedSessionCandidate.agenda));
+    setOnAir(savedSessionCandidate.onAir);
+    setIsPaused(savedSessionCandidate.isPaused);
+    setPauseStartedAtMs(savedSessionCandidate.pauseStartedAtMs);
+    setSessionPausedMsTotal(savedSessionCandidate.sessionPausedMsTotal);
+    setCurrentItemPausedMsTotal(savedSessionCandidate.currentItemPausedMsTotal);
+    setSessionStoppedAtMs(savedSessionCandidate.sessionStoppedAtMs);
+    setCurrentItemStoppedAtMs(savedSessionCandidate.currentItemStoppedAtMs);
+    setSessionStartedAt(savedSessionCandidate.sessionStartedAt);
+    setCurrentItemId(savedSessionCandidate.currentItemId);
+    setCurrentItemStartedAt(savedSessionCandidate.currentItemStartedAt);
+    setMeetingTitle(savedSessionCandidate.meetingTitle);
+    setMeetingSubtitle(savedSessionCandidate.meetingSubtitle);
+    setMeetingDate(savedSessionCandidate.meetingDate);
+    setMeetingLocation(savedSessionCandidate.meetingLocation);
+    setSettingsTitleDraft(savedSessionCandidate.meetingTitle);
+    setSettingsDateDraft(savedSessionCandidate.meetingDate);
+    setSettingsLocationDraft(savedSessionCandidate.meetingLocation);
+    setNowMs(Date.now());
+    setImportInfo(`Gespeicherter Stand vom ${new Date(savedSessionCandidate.savedAtMs).toLocaleString("de-DE")} geladen.`);
+    setSavedSessionCandidate(null);
+    clearSavedSession();
+  }, [clearSavedSession, savedSessionCandidate]);
+
+  const dismissSavedSession = useCallback(() => {
+    clearSavedSession();
+    setSavedSessionCandidate(null);
+  }, [clearSavedSession]);
+
+  useEffect(() => {
+    let rawValue: string | null = null;
+
+    try {
+      rawValue = window.localStorage.getItem(savedSessionStorageKey);
+    } catch {
+      return;
+    }
+
+    if (!rawValue) {
+      return;
+    }
+
+    const parsed = parseSavedSession(rawValue);
+    if (!parsed) {
+      clearSavedSession();
+      return;
+    }
+
+    setSavedSessionCandidate(parsed);
+  }, [clearSavedSession]);
 
   const advanceToNextItem = useCallback(() => {
     if (!onAir || isPaused) {
@@ -708,7 +934,7 @@ function App() {
     setIsStopConfirmOpen(false);
   }, []);
 
-  const confirmStopSession = useCallback(() => {
+  const confirmStopSession = useCallback((saveAfterStop: boolean) => {
     if (!onAir && !isPaused) {
       setIsStopConfirmOpen(false);
       return;
@@ -717,29 +943,23 @@ function App() {
     const timestamp = Date.now();
     const activePauseStartedAt = isPaused ? pauseStartedAtMs ?? timestamp : null;
     const pauseDurationMs = activePauseStartedAt ? Math.max(0, timestamp - activePauseStartedAt) : 0;
+    const nextSessionPausedMsTotal = sessionPausedMsTotal + pauseDurationMs;
 
-    if (pauseDurationMs > 0) {
-      setSessionPausedMsTotal((previous) => previous + pauseDurationMs);
-
-      if (currentItemId !== null) {
-        setCurrentItemPausedMsTotal((previous) => previous + pauseDurationMs);
+    const updatedAgenda = agenda.map((item) => {
+      if (item.id !== currentItemId || item.state !== "live") {
+        return item;
       }
-    }
 
-    setAgenda((previous) =>
-      previous.map((item) => {
-        if (item.id !== currentItemId || item.state !== "live") {
-          return item;
-        }
+      return {
+        ...item,
+        state: "done" as const,
+        actualEndedAtMs: timestamp,
+        actualPausedMsTotal: item.actualPausedMsTotal + pauseDurationMs,
+      };
+    });
 
-        return {
-          ...item,
-          state: "done" as const,
-          actualEndedAtMs: timestamp,
-          actualPausedMsTotal: item.actualPausedMsTotal + pauseDurationMs,
-        };
-      }),
-    );
+    setAgenda(updatedAgenda);
+    setSessionPausedMsTotal(nextSessionPausedMsTotal);
 
     setOnAir(false);
     setIsPaused(false);
@@ -751,7 +971,49 @@ function App() {
     setCurrentItemPausedMsTotal(0);
     setNowMs(timestamp);
     setIsStopConfirmOpen(false);
-  }, [currentItemId, isPaused, onAir, pauseStartedAtMs]);
+
+    if (saveAfterStop) {
+      const snapshot: PersistedSession = {
+        savedAtMs: timestamp,
+        agenda: updatedAgenda,
+        onAir: false,
+        isPaused: false,
+        pauseStartedAtMs: null,
+        sessionPausedMsTotal: nextSessionPausedMsTotal,
+        currentItemPausedMsTotal: 0,
+        sessionStoppedAtMs: timestamp,
+        currentItemStoppedAtMs: timestamp,
+        sessionStartedAt,
+        currentItemId: null,
+        currentItemStartedAt: null,
+        meetingTitle,
+        meetingSubtitle,
+        meetingDate,
+        meetingLocation,
+      };
+
+      const saved = persistSessionSnapshot(snapshot);
+      if (saved) {
+        setImportInfo(`Stand gespeichert (${new Date(timestamp).toLocaleString("de-DE")}).`);
+      }
+    } else {
+      clearSavedSession();
+    }
+  }, [
+    agenda,
+    clearSavedSession,
+    currentItemId,
+    isPaused,
+    meetingDate,
+    meetingLocation,
+    meetingSubtitle,
+    meetingTitle,
+    onAir,
+    pauseStartedAtMs,
+    persistSessionSnapshot,
+    sessionPausedMsTotal,
+    sessionStartedAt,
+  ]);
 
   const openSettings = useCallback(() => {
     setSettingsTitleDraft(meetingTitle);
@@ -849,6 +1111,7 @@ function App() {
         }
 
         const importedTitle = sanitizeImportedText(readCellText(firstSheet, "A1"), 80) || meetingTitle;
+        const importedSubtitle = sanitizeImportedText(readCellText(firstSheet, "A4"), 160);
         const importedLocation =
           sanitizeImportedText(readCellText(firstSheet, "B2"), 80) ||
           sanitizeImportedText(readLabeledValue(firstSheet, /ort/i), 80) ||
@@ -860,6 +1123,7 @@ function App() {
 
         setAgenda(importedAgenda);
         setMeetingTitle(importedTitle);
+        setMeetingSubtitle(importedSubtitle);
         setMeetingDate(importedDate);
         setMeetingLocation(importedLocation);
 
@@ -1233,7 +1497,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || isSettingsOpen || isStopConfirmOpen || isHelpOpen) {
+      if (event.code !== "Space" || isSettingsOpen || isStopConfirmOpen || isHelpOpen || savedSessionCandidate !== null) {
         return;
       }
 
@@ -1254,7 +1518,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem]);
+  }, [advanceToNextItem, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -1300,6 +1564,21 @@ function App() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isHelpOpen]);
+
+  useEffect(() => {
+    if (!savedSessionCandidate) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        dismissSavedSession();
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [dismissSavedSession, savedSessionCandidate]);
 
   const currentClockLabel = useMemo(() => {
     return new Date(nowMs).toLocaleTimeString("de-DE", { hour12: false });
@@ -1385,6 +1664,7 @@ function App() {
 
           <div className="titleArea">
             <h1>{meetingTitle}</h1>
+            {meetingSubtitle ? <p className="meetingSubtitle">{meetingSubtitle}</p> : null}
           </div>
 
           <div className="sessionControlGroup">
@@ -1461,7 +1741,7 @@ function App() {
               <div className="actionMainButtons">
                 <button
                   type="button"
-                  className="iconButton"
+                  className="iconButton settingsIconButton"
                   aria-label="Einstellungen"
                   title="Einstellungen"
                   onClick={openSettings}
@@ -1723,10 +2003,32 @@ function App() {
             />
 
             <div className="settingsImprint">
-              <p className="settingsImprintTitle">Impressum</p>
-              <p>Sascha Molina</p>
-              <p>s.molina@ndr.de</p>
-              <p>© 2026 · Version {appVersion}</p>
+              <p className="settingsImprintTitle">Impressum (Angaben gemäß § 5 TMG)</p>
+              <p>
+                <strong>Diensteanbieter:</strong> Sascha Molina
+              </p>
+              <p>
+                <strong>Kontakt:</strong> s.molina@gmx.de
+              </p>
+              <p>
+                <strong>Verantwortlich für Inhalte nach § 18 Abs. 2 MStV:</strong> Sascha Molina
+              </p>
+              <p>
+                <strong>Urheberrecht:</strong> Inhalte und Quellcode dieser Anwendung sind urheberrechtlich geschützt.
+              </p>
+              <p>
+                <strong>Haftungshinweis:</strong> Trotz sorgfältiger Entwicklung wird keine Gewähr für Vollständigkeit,
+                Richtigkeit und Verfügbarkeit übernommen.
+              </p>
+              <p>
+                <strong>Stand:</strong> Oktober 2026
+              </p>
+              <div className="settingsVersionBlock">
+                <p className="settingsVersionTitle">Sitzungsbuddy</p>
+                <p className="settingsVersionLine">
+                  Version <strong className="settingsVersionNumber">{appVersion}</strong>
+                </p>
+              </div>
             </div>
 
             <div className="settingsActions">
@@ -1755,44 +2057,108 @@ function App() {
           >
             <h3>Hilfe: Sitzungsbuddy bedienen</h3>
             <p className="helpIntro">
-              Diese Anleitung erklärt alle Funktionen für den Live-Betrieb mehrtägiger Sitzungen.
+              Der Sitzungsbuddy ist eine App, die helfen soll sehr dynamische Sitzungen zu planen und zu leiten. Die Agenda
+              kann per Excel importiert werden und dann live getriggert werden. So kann die aktuelle Zeit der einzelnen
+              Positionen und die Gesamtzeit der Sitzung perfekt geplant werden. Außerdem können Positionen sehr frei
+              verschoben werden, um so auch in sehr dynamischen Sitzungen den Ablauf für alle Teilnehmenden sehr transparent
+              und übersichtlich zu machen.
             </p>
 
             <img src={helpOverviewImage} alt="Übersicht der Sitzungsbuddy Oberfläche" className="helpImage" />
+            <p className="helpCaption">Aktueller Screenshot der Oberfläche (Version {appVersion}).</p>
 
             <h4 className="helpSectionTitle">1) Kopfbereich</h4>
             <p className="helpText">
-              Links siehst du aktuelle Uhrzeit, Sitzungszeit und Prognose. Rechts stehen aktueller TOP, laufende TOP-Zeit und
-              Countdown.
+              Oben links stehen Datum und Ort. In der Mitte stehen Haupttitel und Untertitel der Sitzung (Untertitel kommt aus
+              Excel-Zelle A4). Unter der Trennlinie zeigt die linke Seite aktuelle Uhrzeit, Sitzungszeit und Prognose. Rechts
+              siehst du den aktiven TOP, die laufende TOP-Zeit und den Countdown zur geplanten Dauer.
             </p>
 
             <h4 className="helpSectionTitle">2) Session-Steuerung</h4>
             <p className="helpText">
-              <strong>OnAir</strong> startet oder setzt die Sitzung fort. <strong>Pause</strong> hält Zeiten an (blinkende
-              Zeitboxen). <strong>Stop</strong> beendet die Sitzung nach Sicherheitsabfrage.
+              <strong>OnAir</strong> startet bzw. setzt die Sitzung fort. <strong>Pause (❚❚/▶)</strong> hält alle Zeiten an;
+              währenddessen blinken Sitzungszeit und TOP-Zeit im Sekundentakt. <strong>Stop (■)</strong> öffnet einen
+              Sicherheitsdialog mit den Optionen <strong>Nein</strong>, <strong>Ja, ohne Speichern</strong> und
+              <strong>Ja + Speichern</strong>.
             </p>
 
             <h4 className="helpSectionTitle">3) Rechte Funktionsknöpfe</h4>
             <p className="helpText">
-              <strong>Zahnrad</strong> öffnet Einstellungen (Titel, Datum, Ort). <strong>Export</strong> erstellt ein AsRun-PDF
-              und öffnet einen Speichern-Dialog. <strong>Import</strong> lädt eine Agenda aus Excel (.xlsx).
+              <strong>Pause einfügen (⏸+)</strong> legt unter dem nächsten offenen Punkt eine zusätzliche Pausenzeile mit
+              Standarddauer 05:00 an. <strong>Zahnrad</strong> öffnet Einstellungen, Impressum und Hilfe.
+              <strong> Export</strong> erzeugt ein AsRun-Log als PDF (mit Dateidialog). <strong>Import</strong> lädt eine
+              Agenda aus Excel (.xlsx).
             </p>
 
             <h4 className="helpSectionTitle">4) Agenda-Liste</h4>
             <p className="helpText">
-              Aktueller TOP ist gelb/grün markiert, der nächste TOP orange. Künftige TOPs lassen sich mit Pfeilen
-              umsortieren oder auf Halt setzen.
+              Der aktuelle TOP ist gelb/grün markiert, der nächste TOP orange. Bereits gesendete Einträge werden ausgegraut.
+              Zukünftige Einträge lassen sich mit den Pfeilen umsortieren und über <strong>Halt</strong> temporär sperren.
+              Pausenzeilen sind leuchtend gelb dargestellt und verhalten sich wie normale Agendaeinträge.
             </p>
 
-            <h4 className="helpSectionTitle">5) Tastatur</h4>
+            <h4 className="helpSectionTitle">5) Text- und Zeitbearbeitung</h4>
             <p className="helpText">
-              Mit <strong>Leertaste</strong> springst du zum nächsten TOP. Über <strong>Esc</strong> kannst du geöffnete Dialoge
-              schließen.
+              Bei zukünftigen bzw. gehaltenen Punkten kannst du mit Doppelklick den <strong>Titeltext</strong> und die
+              <strong> geplante Dauer</strong> direkt in der Liste bearbeiten (Enter = übernehmen, Esc = abbrechen). Das gilt
+              auch für eingefügte Pausenzeilen.
+            </p>
+
+            <h4 className="helpSectionTitle">6) Triggern per Tastatur</h4>
+            <p className="helpText">
+              <strong>Leertaste</strong> triggert vorwärts zum nächsten TOP. <strong>Strg + Leertaste</strong> nimmt das letzte
+              Triggern zurück und holt den vorherigen TOP wieder auf Sendung. <strong>Esc</strong> schließt geöffnete Dialoge.
+            </p>
+
+            <h4 className="helpSectionTitle">7) Excel-Import</h4>
+            <p className="helpText">
+              Beim Import werden folgende Felder gelesen: <strong>A1</strong> Haupttitel, <strong>A4</strong> Untertitel,
+              <strong> B2</strong> Ort, <strong>C2</strong> Datum/Zeit. TOP-Daten beginnen ab Zeile 6:
+              <strong> A</strong> = TOP-Nummer, <strong>B</strong> = Titel, <strong>C</strong> = geplante Minuten,
+              <strong> D</strong> = Sitzungstag.
+            </p>
+
+            <h4 className="helpSectionTitle">8) AsRun-Export</h4>
+            <p className="helpText">
+              Das PDF enthält alle bereits gesendeten Einträge inklusive Startzeit, geplanter Dauer und Ist-Dauer. Über die
+              Filter oberhalb der Vorschau kannst du zwischen "nur fertige" und "inkl. laufendem" Eintrag wechseln.
+            </p>
+
+            <h4 className="helpSectionTitle">9) Sitzung speichern und fortführen</h4>
+            <p className="helpText">
+              Wenn du bei <strong>Stop</strong> "Ja + Speichern" wählst, wird der aktuelle Stand lokal gesichert. Beim nächsten
+              Start fragt die App automatisch, ob der letzte Stand fortgeführt werden soll.
             </p>
 
             <div className="settingsActions">
               <button type="button" className="settingsButton" onClick={closeHelp}>
                 Schließen
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {savedSessionCandidate ? (
+        <div className="settingsOverlay" onClick={dismissSavedSession}>
+          <section
+            className="settingsModal resumePromptModal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Gespeicherten Sitzungsstand laden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3>Gespeicherten Stand fortführen?</h3>
+            <p className="stopConfirmText">
+              Es gibt einen gespeicherten Sitzungsstand vom {new Date(savedSessionCandidate.savedAtMs).toLocaleString("de-DE")}
+              . Soll dieser Stand geladen und fortgeführt werden?
+            </p>
+            <div className="settingsActions">
+              <button type="button" className="settingsButton ghost" onClick={dismissSavedSession}>
+                Nein
+              </button>
+              <button type="button" className="settingsButton" onClick={restoreSavedSession}>
+                Ja, fortführen
               </button>
             </div>
           </section>
@@ -1809,13 +2175,16 @@ function App() {
             onClick={(event) => event.stopPropagation()}
           >
             <h3>Sitzung beenden?</h3>
-            <p className="stopConfirmText">Soll die laufende Sitzung wirklich beendet werden?</p>
+            <p className="stopConfirmText">Soll die laufende Sitzung beendet werden? Optional kann der Stand gespeichert werden.</p>
             <div className="settingsActions">
               <button type="button" className="settingsButton ghost" onClick={cancelStopSession}>
                 Nein
               </button>
-              <button type="button" className="settingsButton stopConfirmButton" onClick={confirmStopSession}>
-                Ja
+              <button type="button" className="settingsButton" onClick={() => confirmStopSession(false)}>
+                Ja, ohne Speichern
+              </button>
+              <button type="button" className="settingsButton stopConfirmButton" onClick={() => confirmStopSession(true)}>
+                Ja + Speichern
               </button>
             </div>
           </section>
