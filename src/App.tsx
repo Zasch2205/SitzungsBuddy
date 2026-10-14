@@ -2,7 +2,7 @@ import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useCallback
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { jsPDF } from "jspdf";
-import * as XLSX from "xlsx";
+import readXlsxFile, { type Sheet as ImportedSheet } from "read-excel-file/browser";
 import helpOverviewImage from "./assets/help-overview.png";
 import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
 import "./App.css";
@@ -35,6 +35,7 @@ type AsRunEntry = {
 };
 
 type AsRunFilter = "completed" | "all";
+type ImportedSheetData = ImportedSheet["data"];
 
 const initialAgenda: AgendaItem[] = [
   {
@@ -301,20 +302,59 @@ function stateLabel(state: AgendaState): string {
   }
 }
 
-function readCellText(sheet: XLSX.WorkSheet, address: string): string {
-  const cell = sheet[address];
-  if (!cell || cell.v === null || cell.v === undefined) {
+function decodeCellAddress(address: string): { row: number; column: number } | null {
+  const match = address.trim().match(/^([A-Za-z]+)(\d+)$/);
+  if (!match) {
+    return null;
+  }
+
+  const columnLabel = match[1].toUpperCase();
+  const row = Number(match[2]);
+  if (!Number.isInteger(row) || row <= 0) {
+    return null;
+  }
+
+  let column = 0;
+  for (const character of columnLabel) {
+    const code = character.charCodeAt(0) - 64;
+    if (code < 1 || code > 26) {
+      return null;
+    }
+
+    column = column * 26 + code;
+  }
+
+  return { row, column };
+}
+
+function getCellValue(sheet: ImportedSheetData, row: number, column: number): unknown {
+  const rowData = sheet[row - 1];
+  if (!rowData || column <= 0 || column > rowData.length) {
+    return undefined;
+  }
+
+  return rowData[column - 1];
+}
+
+function readCellText(sheet: ImportedSheetData, address: string): string {
+  const decodedAddress = decodeCellAddress(address);
+  if (!decodedAddress) {
     return "";
   }
 
-  if (cell.v instanceof Date) {
-    return sanitizeImportedText(cell.v.toLocaleDateString("de-DE"), 120);
+  const cellValue = getCellValue(sheet, decodedAddress.row, decodedAddress.column);
+  if (cellValue === null || cellValue === undefined) {
+    return "";
   }
 
-  return sanitizeImportedText(String(cell.v));
+  if (cellValue instanceof Date) {
+    return sanitizeImportedText(cellValue.toLocaleDateString("de-DE"), 120);
+  }
+
+  return sanitizeImportedText(String(cellValue));
 }
 
-function readLabeledValue(sheet: XLSX.WorkSheet, labelPattern: RegExp): string {
+function readLabeledValue(sheet: ImportedSheetData, labelPattern: RegExp): string {
   for (let row = 1; row <= 25; row += 1) {
     const leftValue = readCellText(sheet, `A${row}`);
     if (!labelPattern.test(leftValue)) {
@@ -329,22 +369,26 @@ function readLabeledValue(sheet: XLSX.WorkSheet, labelPattern: RegExp): string {
   return "";
 }
 
-function parseDurationCell(cell?: XLSX.CellObject): number | null {
-  if (!cell || cell.v === null || cell.v === undefined || cell.v === "") {
+function parseDurationCell(cell?: unknown): number | null {
+  if (cell === null || cell === undefined || cell === "") {
     return null;
   }
 
-  if (typeof cell.v === "number") {
-    if (cell.v > 0 && cell.v < 1) {
-      return Math.round(cell.v * 24 * 60 * 60);
+  if (cell instanceof Date) {
+    return cell.getHours() * 3600 + cell.getMinutes() * 60 + cell.getSeconds();
+  }
+
+  if (typeof cell === "number") {
+    if (cell > 0 && cell < 1) {
+      return Math.round(cell * 24 * 60 * 60);
     }
 
-    if (cell.v >= 1 && cell.v < 1000) {
-      return Math.round(cell.v * 60);
+    if (cell >= 1 && cell < 1000) {
+      return Math.round(cell * 60);
     }
   }
 
-  const valueText = String(cell.v).trim();
+  const valueText = String(cell).trim();
   const clockMatch = valueText.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (clockMatch) {
     const hours = Number(clockMatch[1]);
@@ -404,14 +448,14 @@ function parseDurationInput(value: string): number | null {
   return null;
 }
 
-function parseDayLabel(dayCell: XLSX.CellObject | undefined, topValue: string): string {
-  if (dayCell && dayCell.v !== null && dayCell.v !== undefined && String(dayCell.v).trim() !== "") {
-    if (typeof dayCell.v === "number") {
-      const dayFromNumber = Math.max(1, Math.round(dayCell.v));
+function parseDayLabel(dayCell: unknown, topValue: string): string {
+  if (dayCell !== null && dayCell !== undefined && String(dayCell).trim() !== "") {
+    if (typeof dayCell === "number") {
+      const dayFromNumber = Math.max(1, Math.round(dayCell));
       return `Tag ${dayFromNumber}`;
     }
 
-    const dayText = String(dayCell.v).trim();
+    const dayText = String(dayCell).trim();
     const digitMatch = dayText.match(/(\d{1,2})/);
     if (digitMatch) {
       return `Tag ${digitMatch[1]}`;
@@ -434,7 +478,7 @@ function parseDayLabel(dayCell: XLSX.CellObject | undefined, topValue: string): 
   return "Tag 1";
 }
 
-function findAgendaStartRow(sheet: XLSX.WorkSheet): number {
+function findAgendaStartRow(sheet: ImportedSheetData): number {
   for (let row = 1; row <= 40; row += 1) {
     const leftValue = readCellText(sheet, `A${row}`).toLowerCase();
     const titleValue = readCellText(sheet, `B${row}`).toLowerCase();
@@ -446,7 +490,7 @@ function findAgendaStartRow(sheet: XLSX.WorkSheet): number {
   return 6;
 }
 
-function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
+function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
   const imported: AgendaItem[] = [];
   let blankStreak = 0;
   const startRow = findAgendaStartRow(sheet);
@@ -469,8 +513,8 @@ function buildImportedAgenda(sheet: XLSX.WorkSheet): AgendaItem[] {
       continue;
     }
 
-    const durationSec = parseDurationCell(sheet[`C${row}`]) ?? 15 * 60;
-    const dayLabel = parseDayLabel(sheet[`D${row}`], topValue);
+    const durationSec = parseDurationCell(getCellValue(sheet, row, 3)) ?? 15 * 60;
+    const dayLabel = parseDayLabel(getCellValue(sheet, row, 4), topValue);
 
     imported.push({
       id: `import-${row}-${topValue.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
@@ -1077,48 +1121,42 @@ function App() {
       }
 
       try {
-        const fileBuffer = await selectedFile.arrayBuffer();
-        const workbook = XLSX.read(fileBuffer, { type: "array", cellDates: true });
+        const workbookSheets = await readXlsxFile(selectedFile);
 
-        if (workbook.SheetNames.length === 0 || workbook.SheetNames.length > maxImportSheetCount) {
+        if (workbookSheets.length === 0 || workbookSheets.length > maxImportSheetCount) {
           throw new Error("Workbook hat ungültige Anzahl Tabellen.");
         }
 
-        const firstSheetName = workbook.SheetNames[0];
-        const firstSheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
+        const firstSheet = workbookSheets[0];
 
-        if (!firstSheet) {
+        if (!firstSheet || !Array.isArray(firstSheet.data)) {
           throw new Error("Keine Tabelle in der Datei gefunden.");
         }
 
-        const sheetRef = firstSheet["!ref"];
-        if (!sheetRef) {
-          throw new Error("Ungültiger Tabellenbereich.");
-        }
+        const firstSheetData = firstSheet.data;
 
-        const range = XLSX.utils.decode_range(sheetRef);
-        const rowCount = range.e.r - range.s.r + 1;
-        const colCount = range.e.c - range.s.c + 1;
+        const rowCount = firstSheetData.length;
+        const colCount = firstSheetData.reduce((maxCols: number, row: Array<unknown>) => Math.max(maxCols, row.length), 0);
         if (rowCount * colCount > maxImportCellCount) {
           throw new Error("Tabelle ist zu groß.");
         }
 
-        const importedAgenda = buildImportedAgenda(firstSheet);
+        const importedAgenda = buildImportedAgenda(firstSheetData);
         if (importedAgenda.length === 0) {
           throw new Error(
             "Keine TOPs gefunden. Erwartet werden TOP in A, Titel in B, Dauer in C und Tag in D (ab Zeile 6).",
           );
         }
 
-        const importedTitle = sanitizeImportedText(readCellText(firstSheet, "A1"), 80) || meetingTitle;
-        const importedSubtitle = sanitizeImportedText(readCellText(firstSheet, "A4"), 160);
+        const importedTitle = sanitizeImportedText(readCellText(firstSheetData, "A1"), 80) || meetingTitle;
+        const importedSubtitle = sanitizeImportedText(readCellText(firstSheetData, "A4"), 160);
         const importedLocation =
-          sanitizeImportedText(readCellText(firstSheet, "B2"), 80) ||
-          sanitizeImportedText(readLabeledValue(firstSheet, /ort/i), 80) ||
+          sanitizeImportedText(readCellText(firstSheetData, "B2"), 80) ||
+          sanitizeImportedText(readLabeledValue(firstSheetData, /ort/i), 80) ||
           meetingLocation;
         const importedDate =
-          sanitizeImportedText(readCellText(firstSheet, "C2"), 80) ||
-          sanitizeImportedText(readLabeledValue(firstSheet, /datum|zeit/i), 80) ||
+          sanitizeImportedText(readCellText(firstSheetData, "C2"), 80) ||
+          sanitizeImportedText(readLabeledValue(firstSheetData, /datum|zeit/i), 80) ||
           meetingDate;
 
         setAgenda(importedAgenda);
