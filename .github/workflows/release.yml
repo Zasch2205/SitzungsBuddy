@@ -58,3 +58,66 @@ jobs:
             - Windows: NSIS Setup (.exe) und/oder MSI (.msi)
           releaseDraft: true
           prerelease: false
+
+  windows-portable:
+    name: Windows Portable ZIP
+    runs-on: windows-latest
+    needs: publish-tauri
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build portable executable (no installer)
+        run: npm run tauri build -- --no-bundle
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $portableDir = "portable/Sitzungsbuddy_${version}_windows_x64_portable"
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+
+          Copy-Item "src-tauri/target/release/sitzungsbuddy.exe" "$portableDir/Sitzungsbuddy.exe" -Force
+
+          @'
+          Sitzungsbuddy (portable)
+          ========================
+
+          Starten:
+          1) ZIP entpacken
+          2) Sitzungsbuddy.exe starten
+
+          Hinweis:
+          - Microsoft Edge WebView2 Runtime muss auf dem System installiert sein.
+          '@ | Set-Content -Path "$portableDir/README.txt" -Encoding UTF8
+
+          Compress-Archive -Path "$portableDir/*" -DestinationPath "Sitzungsbuddy_${version}_windows_x64_portable.zip" -Force
+
+      - name: Upload portable ZIP as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-zip
+          path: Sitzungsbuddy_*_windows_x64_portable.zip
+
+      - name: Attach portable ZIP to GitHub release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          files: Sitzungsbuddy_*_windows_x64_portable.zip
