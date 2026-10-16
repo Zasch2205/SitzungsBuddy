@@ -263,6 +263,12 @@ p {
   gap: 0.55rem;
 }
 
+.actionInsertButtons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
 .actionMainButtons {
   display: flex;
   flex-direction: column;
@@ -308,6 +314,12 @@ p {
 .pauseInsertButton {
   background: #f3e7ab;
   color: #1f2328;
+  font-size: 1.45rem;
+}
+
+.blankInsertButton {
+  background: #d8e0ea;
+  color: #1f2d3c;
   font-size: 1.45rem;
 }
 
@@ -426,7 +438,7 @@ p {
   border-radius: 0.7rem;
   padding: 0.45rem 0.55rem;
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto auto auto;
   align-items: center;
   gap: 0.55rem;
 }
@@ -440,6 +452,22 @@ p {
 .asRunCell {
   font-size: 0.88rem;
   color: #4e6780;
+}
+
+.asRunVariance {
+  font-weight: 700;
+}
+
+.asRunVariance.over {
+  color: #b91f34;
+}
+
+.asRunVariance.under {
+  color: #1c7b32;
+}
+
+.asRunVariance.neutral {
+  color: #335577;
 }
 
 .asRunBadge {
@@ -511,6 +539,7 @@ p {
 
 .agendaItem.current .order,
 .agendaItem.current .day,
+.agendaItem.current .scheduleTime,
 .agendaItem.current .top,
 .agendaItem.current .title,
 .agendaItem.current .duration {
@@ -529,6 +558,7 @@ p {
 
 .agendaItem.next .order,
 .agendaItem.next .day,
+.agendaItem.next .scheduleTime,
 .agendaItem.next .top,
 .agendaItem.next .title,
 .agendaItem.next .duration {
@@ -547,6 +577,7 @@ p {
 
 .agendaItem.finished .order,
 .agendaItem.finished .day,
+.agendaItem.finished .scheduleTime,
 .agendaItem.finished .top,
 .agendaItem.finished .title,
 .agendaItem.finished .duration {
@@ -572,25 +603,50 @@ p {
 
 .agendaItem.pauseItem .order,
 .agendaItem.pauseItem .day,
+.agendaItem.pauseItem .scheduleTime,
 .agendaItem.pauseItem .top,
 .agendaItem.pauseItem .title,
 .agendaItem.pauseItem .duration,
 .agendaItem.pauseItem.current .order,
 .agendaItem.pauseItem.current .day,
+.agendaItem.pauseItem.current .scheduleTime,
 .agendaItem.pauseItem.current .top,
 .agendaItem.pauseItem.current .title,
 .agendaItem.pauseItem.current .duration,
 .agendaItem.pauseItem.next .order,
 .agendaItem.pauseItem.next .day,
+.agendaItem.pauseItem.next .scheduleTime,
 .agendaItem.pauseItem.next .top,
 .agendaItem.pauseItem.next .title,
 .agendaItem.pauseItem.next .duration,
 .agendaItem.pauseItem.finished .order,
 .agendaItem.pauseItem.finished .day,
+.agendaItem.pauseItem.finished .scheduleTime,
 .agendaItem.pauseItem.finished .top,
 .agendaItem.pauseItem.finished .title,
 .agendaItem.pauseItem.finished .duration {
   color: #141414;
+}
+
+.agendaEndRow {
+  border: 2px dashed #9cb6d3;
+  border-radius: 0.75rem;
+  background: #eef4fb;
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.agendaEndBadge {
+  background: #d7e6f5;
+  color: #22415f;
+}
+
+.agendaEndTime {
+  color: #173049;
+  font-weight: 900;
 }
 
 .agendaMeta {
@@ -637,6 +693,13 @@ p {
 .top {
   color: #4f6076;
   font-size: 1.25rem;
+}
+
+.scheduleTime {
+  color: #4f6076;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .title {
@@ -922,6 +985,7 @@ p {
 
   .order,
   .day,
+  .scheduleTime,
   .top {
     font-size: 0.95rem;
   }
@@ -983,6 +1047,11 @@ p {
   }
 
   .agendaItem {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .agendaEndRow {
     flex-direction: column;
     align-items: flex-start;
   }

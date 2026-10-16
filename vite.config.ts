@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
-const appVersion = process.env.npm_package_version ?? "0.6.0";
+const appVersion = process.env.npm_package_version ?? "0.7.0";
 
 // https://vite.dev/config/
 export default defineConfig(() => ({

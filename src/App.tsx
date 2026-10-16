@@ -30,8 +30,10 @@ type AsRunEntry = {
   topLabel: string;
   startedAtMs: number;
   startedAtLabel: string;
+  varianceSec: number;
   plannedLabel: string;
   actualLabel: string;
+  varianceLabel: string;
   isLive: boolean;
 };
 
@@ -340,6 +342,29 @@ function formatCompact(seconds: number): string {
 
 function formatTimeOfDay(timestampMs: number): string {
   return new Date(timestampMs).toLocaleTimeString("de-DE", { hour12: false });
+}
+
+function formatSignedDuration(seconds: number): string {
+  if (seconds === 0) {
+    return "± 00:00";
+  }
+
+  const prefix = seconds > 0 ? "+" : "-";
+  return `${prefix} ${formatCompact(Math.abs(seconds))}`;
+}
+
+function formatAgendaItemLabel(item: AgendaItem, style: "list" | "header" = "list"): string {
+  if (item.kind === "break") {
+    return item.title || "Pause";
+  }
+
+  const topText = item.top.trim();
+  const titleText = item.title.trim();
+  if (topText && titleText) {
+    return `${topText}${style === "header" ? ". " : " "}${titleText}`;
+  }
+
+  return topText || titleText || "Ohne Titel";
 }
 
 function sanitizeImportedText(rawValue: string, maxLength = 240): string {
@@ -788,19 +813,60 @@ function App() {
           item.state === "live" && isPaused && pauseStartedAtMs !== null ? nowMs - pauseStartedAtMs : 0;
         const actualMs = finishedAtMs - startedAtMs - item.actualPausedMsTotal - livePauseDeltaMs;
         const actualSec = Math.max(0, Math.floor(actualMs / 1000));
+        const plannedSec = item.plannedDurationSec;
+        const varianceSec = actualSec - plannedSec;
 
         return {
           id: item.id,
-          topLabel: item.kind === "break" ? item.title || "Pause" : `${item.top} ${item.title}`,
+          topLabel: formatAgendaItemLabel(item, "list"),
           startedAtMs,
           startedAtLabel: formatTimeOfDay(startedAtMs),
-          plannedLabel: formatClock(item.plannedDurationSec),
+          varianceSec,
+          plannedLabel: formatClock(plannedSec),
           actualLabel: formatClock(actualSec),
+          varianceLabel: formatSignedDuration(varianceSec),
           isLive: item.state === "live",
         };
       })
       .sort((left, right) => left.startedAtMs - right.startedAtMs);
   }, [agenda, currentItemId, isPaused, nowMs, pauseStartedAtMs]);
+
+  const scheduleTiming = useMemo(() => {
+    const startTimeByItemId = new Map<string, string>();
+
+    if (sessionStartedAt === null) {
+      for (const item of agenda) {
+        startTimeByItemId.set(item.id, "--:--:--");
+      }
+
+      return {
+        startTimeByItemId,
+        sessionEndLabel: "--:--:--",
+      };
+    }
+
+    let elapsedBeforeItemSec = 0;
+
+    for (const item of agenda) {
+      startTimeByItemId.set(item.id, formatTimeOfDay(sessionStartedAt + elapsedBeforeItemSec * 1000));
+
+      let durationSec = item.plannedDurationSec;
+
+      if (item.state === "done" && item.actualStartedAtMs !== null && item.actualEndedAtMs !== null) {
+        const actualMs = item.actualEndedAtMs - item.actualStartedAtMs - item.actualPausedMsTotal;
+        durationSec = Math.max(0, Math.floor(actualMs / 1000));
+      } else if (item.state === "skipped") {
+        durationSec = 0;
+      }
+
+      elapsedBeforeItemSec += durationSec;
+    }
+
+    return {
+      startTimeByItemId,
+      sessionEndLabel: formatTimeOfDay(sessionStartedAt + elapsedBeforeItemSec * 1000),
+    };
+  }, [agenda, sessionStartedAt]);
 
   const filteredAsRunEntries = useMemo(() => {
     if (asRunFilter === "completed") {
@@ -1361,9 +1427,10 @@ function App() {
     const margin = 42;
     const pageHeight = pdfDocument.internal.pageSize.getHeight();
     const columnTop = margin;
-    const columnStart = 300;
-    const columnPlanned = 404;
-    const columnActual = 500;
+    const columnStart = 258;
+    const columnPlanned = 336;
+    const columnActual = 412;
+    const columnVariance = 486;
     let cursorY = 52;
 
     const drawTableHeader = (y: number) => {
@@ -1373,6 +1440,7 @@ function App() {
       pdfDocument.text("Start", columnStart, y);
       pdfDocument.text("Geplant", columnPlanned, y);
       pdfDocument.text("Ist", columnActual, y);
+      pdfDocument.text("Abw.", columnVariance, y);
       pdfDocument.setLineWidth(1);
       pdfDocument.line(margin, y + 8, 554, y + 8);
       return y + 22;
@@ -1414,12 +1482,13 @@ function App() {
       }
 
       const topLabel =
-        entry.topLabel.length > 45 ? `${entry.topLabel.slice(0, 42).trimEnd()}…` : entry.topLabel;
+        entry.topLabel.length > 39 ? `${entry.topLabel.slice(0, 36).trimEnd()}…` : entry.topLabel;
 
       pdfDocument.text(topLabel, columnTop, cursorY);
       pdfDocument.text(entry.startedAtLabel, columnStart, cursorY);
       pdfDocument.text(entry.plannedLabel, columnPlanned, cursorY);
       pdfDocument.text(entry.actualLabel, columnActual, cursorY);
+      pdfDocument.text(entry.varianceLabel, columnVariance, cursorY);
 
       cursorY += 18;
     });
@@ -1549,6 +1618,43 @@ function App() {
     });
 
     setImportInfo("Pause (05:00) wurde eingefügt.");
+  }, [currentItemId]);
+
+  const insertBlankAfterNextItem = useCallback(() => {
+    const timestamp = Date.now();
+
+    setAgenda((previous) => {
+      const currentIndexInPrevious = currentItemId
+        ? previous.findIndex((item) => item.id === currentItemId)
+        : -1;
+
+      const searchStart = currentIndexInPrevious >= 0 ? currentIndexInPrevious + 1 : 0;
+      const nextIndex = previous.findIndex(
+        (item, index) => index >= searchStart && (item.state === "planned" || item.state === "hold"),
+      );
+
+      const insertAt = nextIndex >= 0 ? nextIndex + 1 : previous.length;
+      const anchorItem = previous[Math.max(0, insertAt - 1)];
+
+      const blankItem: AgendaItem = {
+        id: `blank-${timestamp}-${Math.floor(Math.random() * 10000)}`,
+        kind: "topic",
+        day: anchorItem?.day ?? "Tag 1",
+        order: 0,
+        top: "",
+        title: "Neuer Eintrag",
+        plannedDurationSec: 5 * 60,
+        state: "planned",
+        actualStartedAtMs: null,
+        actualEndedAtMs: null,
+        actualPausedMsTotal: 0,
+      };
+
+      const updated = [...previous.slice(0, insertAt), blankItem, ...previous.slice(insertAt)];
+      return normalizeOrder(updated);
+    });
+
+    setImportInfo("Blanko-Zeile (05:00) wurde eingefügt.");
   }, [currentItemId]);
 
   const beginDurationEdit = useCallback((item: AgendaItem) => {
@@ -1783,9 +1889,7 @@ function App() {
   }, [nowMs]);
 
   const currentTopLabel = currentItem
-    ? currentItem.kind === "break"
-      ? currentItem.title || "Pause"
-      : `${currentItem.top}. ${currentItem.title}`
+    ? formatAgendaItemLabel(currentItem, "header")
     : "Kein aktiver TOP";
 
   const countdownLabel = useMemo(() => {
@@ -1926,15 +2030,26 @@ function App() {
 
           <aside className="actionColumn">
             <div className="actionButtonRow">
-              <button
-                type="button"
-                className="iconButton pauseInsertButton"
-                onClick={insertBreakAfterNextItem}
-                aria-label="Pause unter der nächsten Position einfügen"
-                title="Pause unter der nächsten Position einfügen"
-              >
-                ⏸+
-              </button>
+              <div className="actionInsertButtons">
+                <button
+                  type="button"
+                  className="iconButton pauseInsertButton"
+                  onClick={insertBreakAfterNextItem}
+                  aria-label="Pause unter der nächsten Position einfügen"
+                  title="Pause unter der nächsten Position einfügen"
+                >
+                  ⏸+
+                </button>
+                <button
+                  type="button"
+                  className="iconButton blankInsertButton"
+                  onClick={insertBlankAfterNextItem}
+                  aria-label="Blanko-Zeile unter der nächsten Position einfügen"
+                  title="Blanko-Zeile unter der nächsten Position einfügen"
+                >
+                  □+
+                </button>
+              </div>
 
               <div className="actionMainButtons">
                 <button
@@ -2002,10 +2117,17 @@ function App() {
               const isEditableTitle = item.state === "planned" || item.state === "hold";
               const isEditingDuration = editingDurationItemId === item.id;
               const isEditingTitle = editingTitleItemId === item.id;
+              const shownDurationSec =
+                item.state === "done" && item.actualStartedAtMs !== null && item.actualEndedAtMs !== null
+                  ? Math.max(0, Math.floor((item.actualEndedAtMs - item.actualStartedAtMs - item.actualPausedMsTotal) / 1000))
+                  : item.state === "skipped"
+                    ? 0
+                    : item.plannedDurationSec;
               const isFuture = currentIndex < 0 || index > currentIndex;
               const canMoveUp = isFuture && index > 0;
               const canMoveDown = isFuture && index < agenda.length - 1;
               const canToggleHold = isFuture && (item.state === "planned" || item.state === "hold");
+              const scheduledStartLabel = scheduleTiming.startTimeByItemId.get(item.id) ?? "--:--:--";
               const agendaItemClassName = [
                 "agendaItem",
                 isBreakItem ? "pauseItem" : "",
@@ -2043,15 +2165,15 @@ function App() {
                       <>
                         <span className={`badge state-${item.state}`}>Pause</span>
                         <span className="order">#{item.order}</span>
-                        <span className="day">{item.day}</span>
+                        <span className="scheduleTime">{scheduledStartLabel}</span>
                         {titleElement}
                       </>
                     ) : (
                       <>
                         <span className={`badge state-${item.state}`}>{stateLabel(item.state)}</span>
                         <span className="order">#{item.order}</span>
-                        <span className="day">{item.day}</span>
-                        <span className="top">TOP {item.top}</span>
+                        <span className="scheduleTime">{scheduledStartLabel}</span>
+                        {item.top.trim() ? <span className="top">TOP {item.top}</span> : null}
                         {titleElement}
                       </>
                     )}
@@ -2073,7 +2195,7 @@ function App() {
                         onDoubleClick={isEditableDuration ? () => beginDurationEdit(item) : undefined}
                         title={isEditableDuration ? "Doppelklick zum Bearbeiten" : "Gesendete TOPs sind gesperrt"}
                       >
-                        {formatClock(item.plannedDurationSec)}
+                        {formatClock(shownDurationSec)}
                       </span>
                     )}
                     <button
@@ -2104,6 +2226,14 @@ function App() {
                 </li>
               );
             })}
+            <li className="agendaEndRow">
+              <div className="agendaMeta">
+                <span className="badge agendaEndBadge">Sitzungsende</span>
+              </div>
+              <div className="agendaActions">
+                <span className="duration agendaEndTime">{scheduleTiming.sessionEndLabel}</span>
+              </div>
+            </li>
           </ul>
         </article>
 
@@ -2146,6 +2276,19 @@ function App() {
                   <span className="asRunCell">Start {entry.startedAtLabel}</span>
                   <span className="asRunCell">Geplant {entry.plannedLabel}</span>
                   <span className="asRunCell">Ist {entry.actualLabel}</span>
+                  <span
+                    className={[
+                      "asRunCell",
+                      "asRunVariance",
+                      entry.varianceSec > 0
+                        ? "over"
+                        : entry.varianceSec < 0
+                          ? "under"
+                          : "neutral",
+                    ].join(" ")}
+                  >
+                    Abw. {entry.varianceLabel}
+                  </span>
                   <span className={entry.isLive ? "asRunBadge live" : "asRunBadge done"}>
                     {entry.isLive ? "Läuft" : "Fertig"}
                   </span>
@@ -2283,9 +2426,10 @@ function App() {
             <h4 className="helpSectionTitle">3) Rechte Funktionsknöpfe</h4>
             <p className="helpText">
               <strong>Pause einfügen (⏸+)</strong> legt unter dem nächsten offenen Punkt eine zusätzliche Pausenzeile mit
-              Standarddauer 05:00 an. <strong>Zahnrad</strong> öffnet Einstellungen, Impressum und Hilfe.
-              <strong> Export</strong> erzeugt ein AsRun-Log als PDF (mit Dateidialog). <strong>Import</strong> lädt eine
-              Agenda aus Excel (.xlsx).
+              Standarddauer 05:00 an. <strong>Blanko-Zeile (□+)</strong> fügt darunter einen neutralen Eintrag (nicht gelb)
+              mit 05:00 ein, den du frei umbenennen kannst. <strong>Zahnrad</strong> öffnet Einstellungen, Impressum und
+              Hilfe. <strong> Export</strong> erzeugt ein AsRun-Log als PDF (mit Dateidialog). <strong>Import</strong> lädt
+              eine Agenda aus Excel (.xlsx).
             </p>
 
             <h4 className="helpSectionTitle">4) Agenda-Liste</h4>
@@ -2299,7 +2443,7 @@ function App() {
             <p className="helpText">
               Bei zukünftigen bzw. gehaltenen Punkten kannst du mit Doppelklick den <strong>Titeltext</strong> und die
               <strong> geplante Dauer</strong> direkt in der Liste bearbeiten (Enter = übernehmen, Esc = abbrechen). Das gilt
-              auch für eingefügte Pausenzeilen.
+              auch für eingefügte Pausen- und Blanko-Zeilen.
             </p>
 
             <h4 className="helpSectionTitle">6) Triggern per Tastatur</h4>
@@ -2319,7 +2463,9 @@ function App() {
             <h4 className="helpSectionTitle">8) AsRun-Export</h4>
             <p className="helpText">
               Das PDF enthält alle bereits gesendeten Einträge inklusive Startzeit, geplanter Dauer und Ist-Dauer. Über die
-              Filter oberhalb der Vorschau kannst du zwischen "nur fertige" und "inkl. laufendem" Eintrag wechseln.
+              Filter oberhalb der Vorschau kannst du zwischen "nur fertige" und "inkl. laufendem" Eintrag wechseln. In der
+              Vorschau und im PDF siehst du zusätzlich die <strong>Abweichung (Abw.)</strong> als +/−-Wert zwischen geplanter
+              und tatsächlicher Dauer.
             </p>
 
             <h4 className="helpSectionTitle">9) Sitzung speichern und fortführen</h4>
