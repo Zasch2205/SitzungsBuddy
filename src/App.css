@@ -31,6 +31,15 @@ p {
   background: #8ef994;
 }
 
+.audienceMode .onAirButton {
+  pointer-events: none;
+  cursor: default;
+}
+
+.audienceMode .statusLayout {
+  grid-template-columns: minmax(250px, 340px) minmax(350px, 1fr);
+}
+
 .freezeHeader {
   position: sticky;
   top: 0;
@@ -656,6 +665,22 @@ p {
   flex-wrap: wrap;
 }
 
+.placeholderItem {
+  background: rgb(255 255 255 / 68%);
+  border-style: dashed;
+}
+
+.placeholderTitle {
+  color: #3d5775;
+  font-size: 1.55rem;
+  font-weight: 700;
+}
+
+.placeholderSpacer {
+  display: inline-block;
+  min-height: 1.8rem;
+}
+
 .badge {
   border-radius: 999px;
   padding: 0.15rem 0.5rem;
@@ -737,6 +762,18 @@ p {
   align-items: center;
   gap: 0.35rem;
   flex-shrink: 0;
+}
+
+.audienceAgendaActions {
+  justify-content: flex-end;
+  min-width: 8.4rem;
+}
+
+.audienceMode .duration {
+  width: 8.4rem;
+  min-width: 8.4rem;
+  flex-basis: 8.4rem;
+  padding-right: 0;
 }
 
 .duration {

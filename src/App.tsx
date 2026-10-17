@@ -1,5 +1,7 @@
 import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { save } from "@tauri-apps/plugin-dialog";
 import { jsPDF } from "jspdf";
 import readXlsxFile, { type Sheet as ImportedSheet } from "read-excel-file/browser";
@@ -9,7 +11,7 @@ import { fnv1aHash } from "./lib/checksum";
 import "./App.css";
 
 type AgendaState = "planned" | "live" | "hold" | "done" | "skipped";
-type AgendaKind = "topic" | "break";
+type AgendaKind = "topic" | "break" | "placeholder";
 
 type AgendaItem = {
   id: string;
@@ -40,60 +42,37 @@ type AsRunEntry = {
 type AsRunFilter = "completed" | "all";
 type ImportedSheetData = ImportedSheet["data"];
 
-const initialAgenda: AgendaItem[] = [
-  {
-    id: "d1-1",
-    kind: "topic",
-    day: "Tag 1",
-    order: 1,
-    top: "1",
-    title: "Begrüßung und Zielsetzung",
-    plannedDurationSec: 15 * 60,
+const audienceViewQueryParam = "view";
+const audienceViewQueryValue = "audience";
+const audienceWindowLabel = "audience-view";
+const liveMirrorStorageKey = "sitzungsbuddy.live-mirror.v1";
+
+function createDefaultAgenda(): AgendaItem[] {
+  const placeholderRows = [
+    "noch keine Agenda geladen",
+    "Bitte Agenda über den Import Knopf importieren",
+    "",
+    "",
+    "",
+    "",
+  ];
+
+  return placeholderRows.map((title, index) => ({
+    id: `placeholder-${index + 1}`,
+    kind: "placeholder",
+    day: "",
+    order: index + 1,
+    top: "",
+    title,
+    plannedDurationSec: 0,
     state: "planned",
     actualStartedAtMs: null,
     actualEndedAtMs: null,
     actualPausedMsTotal: 0,
-  },
-  {
-    id: "d1-2",
-    kind: "topic",
-    day: "Tag 1",
-    order: 2,
-    top: "2",
-    title: "Statusberichte der Fachbereiche",
-    plannedDurationSec: 45 * 60,
-    state: "planned",
-    actualStartedAtMs: null,
-    actualEndedAtMs: null,
-    actualPausedMsTotal: 0,
-  },
-  {
-    id: "d1-3",
-    kind: "topic",
-    day: "Tag 1",
-    order: 3,
-    top: "3",
-    title: "Entscheidung Budget 2027",
-    plannedDurationSec: 30 * 60,
-    state: "planned",
-    actualStartedAtMs: null,
-    actualEndedAtMs: null,
-    actualPausedMsTotal: 0,
-  },
-  {
-    id: "d2-1",
-    kind: "topic",
-    day: "Tag 2",
-    order: 4,
-    top: "4",
-    title: "Roadmap-Planung",
-    plannedDurationSec: 60 * 60,
-    state: "planned",
-    actualStartedAtMs: null,
-    actualEndedAtMs: null,
-    actualPausedMsTotal: 0,
-  },
-];
+  }));
+}
+
+const initialAgenda: AgendaItem[] = createDefaultAgenda();
 
 const movableStates: AgendaState[] = ["planned", "hold"];
 const defaultMeetingTitle = "135. PTKO";
@@ -169,7 +148,8 @@ function parseSavedAgenda(rawAgenda: unknown): AgendaItem[] | null {
       return null;
     }
 
-    const kind: AgendaKind = rawItem.kind === "break" ? "break" : "topic";
+    const kind: AgendaKind =
+      rawItem.kind === "break" ? "break" : rawItem.kind === "placeholder" ? "placeholder" : "topic";
     const state: AgendaState =
       rawItem.state === "live" ||
       rawItem.state === "hold" ||
@@ -179,14 +159,16 @@ function parseSavedAgenda(rawAgenda: unknown): AgendaItem[] | null {
         ? rawItem.state
         : "planned";
 
-    const day = sanitizeImportedText(String(rawItem.day ?? "Tag 1"), 64) || "Tag 1";
-    const topFallback = kind === "break" ? "PAUSE" : String(index + 1);
+    const dayFallback = kind === "placeholder" ? "" : "Tag 1";
+    const day = sanitizeImportedText(String(rawItem.day ?? dayFallback), 64) || dayFallback;
+    const topFallback = kind === "break" ? "PAUSE" : kind === "placeholder" ? "" : String(index + 1);
     const top = sanitizeImportedText(String(rawItem.top ?? topFallback), 64) || topFallback;
-    const titleFallback = kind === "break" ? "Pause" : `TOP ${top}`;
+    const titleFallback = kind === "break" ? "Pause" : kind === "placeholder" ? "" : `TOP ${top}`;
     const title = sanitizeImportedText(String(rawItem.title ?? titleFallback), 200) || titleFallback;
 
-    const durationSec = Math.round(readNonNegativeNumber(rawItem.plannedDurationSec, 300));
-    const plannedDurationSec = Math.max(60, durationSec);
+    const durationFallback = kind === "placeholder" ? 0 : 300;
+    const durationSec = Math.round(readNonNegativeNumber(rawItem.plannedDurationSec, durationFallback));
+    const plannedDurationSec = kind === "placeholder" ? 0 : Math.max(60, durationSec);
 
     return {
       id: itemId,
@@ -356,6 +338,10 @@ function formatSignedDuration(seconds: number): string {
 function formatAgendaItemLabel(item: AgendaItem, style: "list" | "header" = "list"): string {
   if (item.kind === "break") {
     return item.title || "Pause";
+  }
+
+  if (item.kind === "placeholder") {
+    return item.title;
   }
 
   const topText = item.top.trim();
@@ -697,7 +683,12 @@ function ensurePdfExtension(path: string): string {
 
 function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const agendaScrollAreaRef = useRef<HTMLElement | null>(null);
   const appVersion = __APP_VERSION__;
+  const isAudienceView = useMemo(() => {
+    const query = new URLSearchParams(window.location.search);
+    return query.get(audienceViewQueryParam) === audienceViewQueryValue;
+  }, []);
 
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
@@ -730,6 +721,11 @@ function App() {
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const [savedSessionCandidate, setSavedSessionCandidate] = useState<PersistedSession | null>(null);
 
+  const hasRealAgendaItems = useMemo(
+    () => agenda.some((item) => item.kind === "topic" || item.kind === "break"),
+    [agenda],
+  );
+
   const currentIndex = useMemo(
     () => agenda.findIndex((item) => item.id === currentItemId),
     [agenda, currentItemId],
@@ -739,7 +735,9 @@ function App() {
 
   const nextItemId = useMemo(() => {
     const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
-    const nextPlanned = agenda.find((item, index) => index >= startIndex && item.state === "planned");
+    const nextPlanned = agenda.find(
+      (item, index) => index >= startIndex && item.kind !== "placeholder" && item.state === "planned",
+    );
     return nextPlanned?.id ?? null;
   }, [agenda, currentIndex]);
 
@@ -876,6 +874,194 @@ function App() {
     return asRunEntries;
   }, [asRunEntries, asRunFilter]);
 
+  const applySessionSnapshot = useCallback((snapshot: PersistedSession) => {
+    setAgenda(normalizeOrder(snapshot.agenda));
+    setOnAir(snapshot.onAir);
+    setIsPaused(snapshot.isPaused);
+    setPauseStartedAtMs(snapshot.pauseStartedAtMs);
+    setSessionPausedMsTotal(snapshot.sessionPausedMsTotal);
+    setCurrentItemPausedMsTotal(snapshot.currentItemPausedMsTotal);
+    setSessionStoppedAtMs(snapshot.sessionStoppedAtMs);
+    setCurrentItemStoppedAtMs(snapshot.currentItemStoppedAtMs);
+    setSessionStartedAt(snapshot.sessionStartedAt);
+    setCurrentItemId(snapshot.currentItemId);
+    setCurrentItemStartedAt(snapshot.currentItemStartedAt);
+    setMeetingTitle(snapshot.meetingTitle);
+    setMeetingSubtitle(snapshot.meetingSubtitle);
+    setMeetingDate(snapshot.meetingDate);
+    setMeetingLocation(snapshot.meetingLocation);
+    setSettingsTitleDraft(snapshot.meetingTitle);
+    setSettingsDateDraft(snapshot.meetingDate);
+    setSettingsLocationDraft(snapshot.meetingLocation);
+    setNowMs(Date.now());
+  }, []);
+
+  useEffect(() => {
+    if (isAudienceView) {
+      return;
+    }
+
+    try {
+      const envelope = buildPersistedSessionEnvelope({
+        savedAtMs: Date.now(),
+        agenda,
+        onAir,
+        isPaused,
+        pauseStartedAtMs,
+        sessionPausedMsTotal,
+        currentItemPausedMsTotal,
+        sessionStoppedAtMs,
+        currentItemStoppedAtMs,
+        sessionStartedAt,
+        currentItemId,
+        currentItemStartedAt,
+        meetingTitle,
+        meetingSubtitle,
+        meetingDate,
+        meetingLocation,
+      });
+
+      window.localStorage.setItem(liveMirrorStorageKey, JSON.stringify(envelope));
+    } catch {
+      // ignore storage errors
+    }
+  }, [
+    agenda,
+    currentItemId,
+    currentItemPausedMsTotal,
+    currentItemStartedAt,
+    currentItemStoppedAtMs,
+    isAudienceView,
+    isPaused,
+    meetingDate,
+    meetingLocation,
+    meetingSubtitle,
+    meetingTitle,
+    onAir,
+    pauseStartedAtMs,
+    sessionPausedMsTotal,
+    sessionStartedAt,
+    sessionStoppedAtMs,
+  ]);
+
+  useEffect(() => {
+    if (!isAudienceView) {
+      return;
+    }
+
+    const applyLiveMirrorSnapshot = (rawValue: string | null) => {
+      const parsed = parseSavedSession(rawValue);
+      if (!parsed) {
+        return;
+      }
+
+      applySessionSnapshot(parsed);
+    };
+
+    let active = true;
+    const hydrateFromStorage = () => {
+      if (!active) {
+        return;
+      }
+
+      try {
+        applyLiveMirrorSnapshot(window.localStorage.getItem(liveMirrorStorageKey));
+      } catch {
+        // ignore storage errors
+      }
+    };
+
+    hydrateFromStorage();
+
+    const mirrorPolling = window.setInterval(hydrateFromStorage, 1000);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === liveMirrorStorageKey) {
+        applyLiveMirrorSnapshot(event.newValue);
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      active = false;
+      window.clearInterval(mirrorPolling);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [applySessionSnapshot, isAudienceView]);
+
+  useEffect(() => {
+    if (isAudienceView || !("__TAURI_INTERNALS__" in window)) {
+      return;
+    }
+
+    let active = true;
+
+    const ensureAudienceWindow = async () => {
+      if (!active) {
+        return;
+      }
+
+      try {
+        const monitors = await availableMonitors();
+        if (!active || monitors.length < 2) {
+          return;
+        }
+
+        const existingWindow = await WebviewWindow.getByLabel(audienceWindowLabel);
+        if (!active || existingWindow) {
+          return;
+        }
+
+        const primary = await primaryMonitor();
+        const externalMonitor =
+          monitors.find((monitor) => {
+            if (!primary) {
+              return true;
+            }
+
+            return monitor.position.x !== primary.position.x || monitor.position.y !== primary.position.y;
+          }) ?? monitors[1];
+
+        if (!externalMonitor) {
+          return;
+        }
+
+        const workPosition = externalMonitor.workArea.position.toLogical(externalMonitor.scaleFactor);
+        const workSize = externalMonitor.workArea.size.toLogical(externalMonitor.scaleFactor);
+
+        const audienceWindow = new WebviewWindow(audienceWindowLabel, {
+          title: "Sitzungsbuddy · Beamer",
+          url: `/?${audienceViewQueryParam}=${audienceViewQueryValue}`,
+          x: Math.round(workPosition.x),
+          y: Math.round(workPosition.y),
+          width: Math.max(960, Math.round(workSize.width)),
+          height: Math.max(700, Math.round(workSize.height)),
+          decorations: false,
+          resizable: true,
+        });
+
+        audienceWindow.once("tauri://created", async () => {
+          try {
+            await audienceWindow.setFullscreen(true);
+          } catch {
+            // ignore fullscreen errors
+          }
+        });
+      } catch (error) {
+        console.warn("Beamer-Fenster konnte nicht erstellt werden.", error);
+      }
+    };
+
+    void ensureAudienceWindow();
+    const monitorPolling = window.setInterval(() => {
+      void ensureAudienceWindow();
+    }, 5000);
+
+    return () => {
+      active = false;
+      window.clearInterval(monitorPolling);
+    };
+  }, [isAudienceView]);
+
   const clearSavedSession = useCallback(() => {
     try {
       window.localStorage.removeItem(savedSessionStorageKey);
@@ -900,29 +1086,11 @@ function App() {
       return;
     }
 
-    setAgenda(normalizeOrder(savedSessionCandidate.agenda));
-    setOnAir(savedSessionCandidate.onAir);
-    setIsPaused(savedSessionCandidate.isPaused);
-    setPauseStartedAtMs(savedSessionCandidate.pauseStartedAtMs);
-    setSessionPausedMsTotal(savedSessionCandidate.sessionPausedMsTotal);
-    setCurrentItemPausedMsTotal(savedSessionCandidate.currentItemPausedMsTotal);
-    setSessionStoppedAtMs(savedSessionCandidate.sessionStoppedAtMs);
-    setCurrentItemStoppedAtMs(savedSessionCandidate.currentItemStoppedAtMs);
-    setSessionStartedAt(savedSessionCandidate.sessionStartedAt);
-    setCurrentItemId(savedSessionCandidate.currentItemId);
-    setCurrentItemStartedAt(savedSessionCandidate.currentItemStartedAt);
-    setMeetingTitle(savedSessionCandidate.meetingTitle);
-    setMeetingSubtitle(savedSessionCandidate.meetingSubtitle);
-    setMeetingDate(savedSessionCandidate.meetingDate);
-    setMeetingLocation(savedSessionCandidate.meetingLocation);
-    setSettingsTitleDraft(savedSessionCandidate.meetingTitle);
-    setSettingsDateDraft(savedSessionCandidate.meetingDate);
-    setSettingsLocationDraft(savedSessionCandidate.meetingLocation);
-    setNowMs(Date.now());
+    applySessionSnapshot(savedSessionCandidate);
     setImportInfo(`Gespeicherter Stand vom ${new Date(savedSessionCandidate.savedAtMs).toLocaleString("de-DE")} geladen.`);
     setSavedSessionCandidate(null);
     clearSavedSession();
-  }, [clearSavedSession, savedSessionCandidate]);
+  }, [applySessionSnapshot, clearSavedSession, savedSessionCandidate]);
 
   const dismissSavedSession = useCallback(() => {
     clearSavedSession();
@@ -930,6 +1098,10 @@ function App() {
   }, [clearSavedSession]);
 
   useEffect(() => {
+    if (isAudienceView) {
+      return;
+    }
+
     let rawValue: string | null = null;
 
     try {
@@ -950,10 +1122,72 @@ function App() {
     }
 
     setSavedSessionCandidate(parsed);
-  }, [clearSavedSession]);
+  }, [clearSavedSession, isAudienceView]);
+
+  useEffect(() => {
+    if (!isAudienceView || !currentItemId) {
+      return;
+    }
+
+    let rafA = 0;
+    let rafB = 0;
+
+    const alignLiveRow = () => {
+      const scrollContainer = agendaScrollAreaRef.current;
+      if (!scrollContainer) {
+        return;
+      }
+
+      const agendaRows = Array.from(scrollContainer.querySelectorAll<HTMLElement>("li[data-item-id]"));
+      if (agendaRows.length === 0) {
+        return;
+      }
+
+      const liveIndex = agendaRows.findIndex((row) => row.dataset.itemId === currentItemId);
+      if (liveIndex < 0) {
+        return;
+      }
+
+      const anchorIndex = Math.max(0, liveIndex - 1);
+      const anchorRow = agendaRows[anchorIndex];
+      if (!anchorRow) {
+        return;
+      }
+
+      anchorRow.scrollIntoView({
+        block: "start",
+        behavior: "auto",
+      });
+    };
+
+    rafA = window.requestAnimationFrame(() => {
+      rafB = window.requestAnimationFrame(alignLiveRow);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafA);
+      window.cancelAnimationFrame(rafB);
+    };
+  }, [agenda.length, currentItemId, isAudienceView]);
+
+  useEffect(() => {
+    if (isAudienceView || !("__TAURI_INTERNALS__" in window)) {
+      return;
+    }
+
+    void invoke("set_on_air_mode", { enabled: onAir }).catch((error) => {
+      console.warn("Sleep-Blocker konnte nicht gesetzt werden.", error);
+    });
+
+    return () => {
+      void invoke("set_on_air_mode", { enabled: false }).catch(() => {
+        // ignore cleanup failures
+      });
+    };
+  }, [isAudienceView, onAir]);
 
   const advanceToNextItem = useCallback(() => {
-    if (!onAir || isPaused) {
+    if (isAudienceView || !onAir || isPaused) {
       return;
     }
 
@@ -962,7 +1196,7 @@ function App() {
       ? agenda.findIndex((item) => item.id === currentItemId)
       : -1;
     const nextIndex = agenda.findIndex(
-      (item, index) => index > currentIndexInAgenda && item.state === "planned",
+      (item, index) => index > currentIndexInAgenda && item.kind !== "placeholder" && item.state === "planned",
     );
 
     const nextItemId = nextIndex >= 0 ? agenda[nextIndex].id : null;
@@ -994,10 +1228,10 @@ function App() {
     setCurrentItemPausedMsTotal(0);
     setCurrentItemStoppedAtMs(nextItemId ? null : timestamp);
     setNowMs(timestamp);
-  }, [agenda, currentItemId, isPaused, onAir]);
+  }, [agenda, currentItemId, isAudienceView, isPaused, onAir]);
 
   const rewindToPreviousItem = useCallback(() => {
-    if (!onAir || isPaused) {
+    if (isAudienceView || !onAir || isPaused) {
       return;
     }
 
@@ -1048,10 +1282,19 @@ function App() {
     setCurrentItemPausedMsTotal(previousItem.actualPausedMsTotal);
     setCurrentItemStoppedAtMs(null);
     setNowMs(timestamp);
-  }, [agenda, currentItemId, isPaused, onAir]);
+  }, [agenda, currentItemId, isAudienceView, isPaused, onAir]);
 
   const startOnAir = useCallback(() => {
+    if (isAudienceView) {
+      return;
+    }
+
     if (onAir) {
+      return;
+    }
+
+    if (!hasRealAgendaItems) {
+      setImportInfo("Bitte zuerst eine Agenda importieren.");
       return;
     }
 
@@ -1072,7 +1315,7 @@ function App() {
       return;
     }
 
-    const firstPlanned = agenda.find((item) => item.state === "planned");
+    const firstPlanned = agenda.find((item) => item.kind !== "placeholder" && item.state === "planned");
     if (!firstPlanned) {
       return;
     }
@@ -1096,10 +1339,10 @@ function App() {
     setCurrentItemStartedAt(timestamp);
     setCurrentItemPausedMsTotal(0);
     setCurrentItemStoppedAtMs(null);
-  }, [agenda, currentItemId, onAir, sessionStartedAt]);
+  }, [agenda, currentItemId, hasRealAgendaItems, isAudienceView, onAir, sessionStartedAt]);
 
   const togglePauseSession = useCallback(() => {
-    if (!onAir) {
+    if (isAudienceView || !onAir) {
       return;
     }
 
@@ -1133,15 +1376,15 @@ function App() {
         }),
       );
     }
-  }, [currentItemId, isPaused, onAir, pauseStartedAtMs]);
+  }, [currentItemId, isAudienceView, isPaused, onAir, pauseStartedAtMs]);
 
   const stopSession = useCallback(() => {
-    if (!onAir && !isPaused) {
+    if (isAudienceView || (!onAir && !isPaused)) {
       return;
     }
 
     setIsStopConfirmOpen(true);
-  }, [isPaused, onAir]);
+  }, [isAudienceView, isPaused, onAir]);
 
   const cancelStopSession = useCallback(() => {
     setIsStopConfirmOpen(false);
@@ -1801,7 +2044,14 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code !== "Space" || isSettingsOpen || isStopConfirmOpen || isHelpOpen || savedSessionCandidate !== null) {
+      if (
+        isAudienceView ||
+        event.code !== "Space" ||
+        isSettingsOpen ||
+        isStopConfirmOpen ||
+        isHelpOpen ||
+        savedSessionCandidate !== null
+      ) {
         return;
       }
 
@@ -1822,7 +2072,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
+  }, [advanceToNextItem, isAudienceView, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -1951,7 +2201,7 @@ function App() {
   const pausedValueBoxClass = isPaused ? "valueBox pausedBlink" : "valueBox";
 
   return (
-    <main className="appShell">
+    <main className={isAudienceView ? "appShell audienceMode" : "appShell"}>
       <header className="freezeHeader">
         <div className="headerTopRow">
           <div className="leftHeaderStack">
@@ -1974,34 +2224,37 @@ function App() {
               type="button"
               className={onAir ? "onAirButton active" : "onAirButton"}
               onClick={startOnAir}
+              aria-label={onAir ? "OnAir aktiv" : "OnAir inaktiv"}
             >
               On
               <br />
               Air
             </button>
 
-            <div className="miniSessionButtons">
-              <button
-                type="button"
-                className="miniSessionButton"
-                onClick={togglePauseSession}
-                disabled={!onAir}
-                title={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
-                aria-label={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
-              >
-                {isPaused ? "▶" : "❚❚"}
-              </button>
-              <button
-                type="button"
-                className="miniSessionButton"
-                onClick={stopSession}
-                disabled={!onAir && !isPaused}
-                title="Sitzung beenden"
-                aria-label="Sitzung beenden"
-              >
-                ■
-              </button>
-            </div>
+            {!isAudienceView ? (
+              <div className="miniSessionButtons">
+                <button
+                  type="button"
+                  className="miniSessionButton"
+                  onClick={togglePauseSession}
+                  disabled={!onAir}
+                  title={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
+                  aria-label={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
+                >
+                  {isPaused ? "▶" : "❚❚"}
+                </button>
+                <button
+                  type="button"
+                  className="miniSessionButton"
+                  onClick={stopSession}
+                  disabled={!onAir && !isPaused}
+                  title="Sitzung beenden"
+                  aria-label="Sitzung beenden"
+                >
+                  ■
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -2028,7 +2281,7 @@ function App() {
             <p className={`deltaValue ${countdownClass}`}>{countdownLabel}</p>
           </section>
 
-          <aside className="actionColumn">
+          {!isAudienceView ? <aside className="actionColumn">
             <div className="actionButtonRow">
               <div className="actionInsertButtons">
                 <button
@@ -2091,30 +2344,35 @@ function App() {
             </div>
             <p className="spaceHint">Leertaste = Nächster TOP · Strg+Leertaste = Zurück</p>
             {importInfo ? <p className="importHint">{importInfo}</p> : null}
-          </aside>
+          </aside> : null}
         </div>
       </header>
 
-      <input
-        ref={importInputRef}
-        type="file"
-        accept=".xlsx"
-        className="hiddenFileInput"
-        onChange={handleAgendaImport}
-      />
+      {!isAudienceView ? (
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".xlsx"
+          className="hiddenFileInput"
+          onChange={handleAgendaImport}
+        />
+      ) : null}
 
-      <section className="agendaScrollArea">
+      <section ref={agendaScrollAreaRef} className="agendaScrollArea">
         <article className="agendaCard">
           <h2>Agenda</h2>
-          <p className="hint">Zukünftige Punkte lassen sich umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
+          {!isAudienceView ? (
+            <p className="hint">Zukünftige Punkte lassen sich umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
+          ) : null}
           <ul className="agendaList">
             {agenda.map((item, index) => {
               const isCurrent = item.id === currentItemId;
               const isNext = item.id === nextItemId;
               const isFinished = item.state === "done" || item.state === "skipped";
               const isBreakItem = item.kind === "break";
-              const isEditableDuration = item.state === "planned" || item.state === "hold";
-              const isEditableTitle = item.state === "planned" || item.state === "hold";
+              const isPlaceholderItem = item.kind === "placeholder";
+              const isEditableDuration = !isAudienceView && !isPlaceholderItem && (item.state === "planned" || item.state === "hold");
+              const isEditableTitle = !isAudienceView && !isPlaceholderItem && (item.state === "planned" || item.state === "hold");
               const isEditingDuration = editingDurationItemId === item.id;
               const isEditingTitle = editingTitleItemId === item.id;
               const shownDurationSec =
@@ -2124,13 +2382,15 @@ function App() {
                     ? 0
                     : item.plannedDurationSec;
               const isFuture = currentIndex < 0 || index > currentIndex;
-              const canMoveUp = isFuture && index > 0;
-              const canMoveDown = isFuture && index < agenda.length - 1;
-              const canToggleHold = isFuture && (item.state === "planned" || item.state === "hold");
+              const canMoveUp = !isAudienceView && !isPlaceholderItem && isFuture && index > 0;
+              const canMoveDown = !isAudienceView && !isPlaceholderItem && isFuture && index < agenda.length - 1;
+              const canToggleHold =
+                !isAudienceView && !isPlaceholderItem && isFuture && (item.state === "planned" || item.state === "hold");
               const scheduledStartLabel = scheduleTiming.startTimeByItemId.get(item.id) ?? "--:--:--";
               const agendaItemClassName = [
                 "agendaItem",
                 isBreakItem ? "pauseItem" : "",
+                isPlaceholderItem ? "placeholderItem" : "",
                 isCurrent ? "current" : "",
                 isNext ? "next" : "",
                 isFinished ? "finished" : "",
@@ -2152,16 +2412,18 @@ function App() {
                 <span
                   className={isEditableTitle ? "title editable" : "title"}
                   onDoubleClick={isEditableTitle ? () => beginTitleEdit(item) : undefined}
-                  title={isEditableTitle ? "Doppelklick zum Bearbeiten" : "Gesendete TOPs sind gesperrt"}
+                  title={isEditableTitle ? "Doppelklick zum Bearbeiten" : undefined}
                 >
                   {item.title}
                 </span>
               );
 
               return (
-                <li key={item.id} className={agendaItemClassName}>
+                <li key={item.id} className={agendaItemClassName} data-item-id={item.id}>
                   <div className="agendaMeta">
-                    {isBreakItem ? (
+                    {isPlaceholderItem ? (
+                      item.title ? <span className="placeholderTitle">{item.title}</span> : <span className="placeholderSpacer" aria-hidden="true" />
+                    ) : isBreakItem ? (
                       <>
                         <span className={`badge state-${item.state}`}>Pause</span>
                         <span className="order">#{item.order}</span>
@@ -2178,66 +2440,74 @@ function App() {
                       </>
                     )}
                   </div>
-                  <div className="agendaActions">
-                    {isEditingDuration ? (
-                      <input
-                        className="durationInput"
-                        value={editingDurationValue}
-                        onChange={(event) => setEditingDurationValue(event.currentTarget.value)}
-                        onBlur={() => commitDurationEdit(item.id)}
-                        onKeyDown={(event) => handleDurationInputKeyDown(event, item.id)}
-                        autoFocus
-                        aria-label={`Dauer für TOP ${item.top} bearbeiten`}
-                      />
-                    ) : (
-                      <span
-                        className={isEditableDuration ? "duration editable" : "duration"}
-                        onDoubleClick={isEditableDuration ? () => beginDurationEdit(item) : undefined}
-                        title={isEditableDuration ? "Doppelklick zum Bearbeiten" : "Gesendete TOPs sind gesperrt"}
-                      >
-                        {formatClock(shownDurationSec)}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      className="mini"
-                      onClick={() => moveFutureItem(index, -1)}
-                      disabled={!canMoveUp}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      className="mini"
-                      onClick={() => moveFutureItem(index, 1)}
-                      disabled={!canMoveDown}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      type="button"
-                      className="mini wide"
-                      onClick={() => toggleHold(index)}
-                      disabled={!canToggleHold}
-                    >
-                      {item.state === "hold" ? "Fortsetzen" : "Halt"}
-                    </button>
-                  </div>
+                  {!isPlaceholderItem ? (
+                    <div className={isAudienceView ? "agendaActions audienceAgendaActions" : "agendaActions"}>
+                      {isEditingDuration ? (
+                        <input
+                          className="durationInput"
+                          value={editingDurationValue}
+                          onChange={(event) => setEditingDurationValue(event.currentTarget.value)}
+                          onBlur={() => commitDurationEdit(item.id)}
+                          onKeyDown={(event) => handleDurationInputKeyDown(event, item.id)}
+                          autoFocus
+                          aria-label={`Dauer für TOP ${item.top} bearbeiten`}
+                        />
+                      ) : (
+                        <span
+                          className={isEditableDuration ? "duration editable" : "duration"}
+                          onDoubleClick={isEditableDuration ? () => beginDurationEdit(item) : undefined}
+                          title={isEditableDuration ? "Doppelklick zum Bearbeiten" : undefined}
+                        >
+                          {formatClock(shownDurationSec)}
+                        </span>
+                      )}
+                      {!isAudienceView ? (
+                        <>
+                          <button
+                            type="button"
+                            className="mini"
+                            onClick={() => moveFutureItem(index, -1)}
+                            disabled={!canMoveUp}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            className="mini"
+                            onClick={() => moveFutureItem(index, 1)}
+                            disabled={!canMoveDown}
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            className="mini wide"
+                            onClick={() => toggleHold(index)}
+                            disabled={!canToggleHold}
+                          >
+                            {item.state === "hold" ? "Fortsetzen" : "Halt"}
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </li>
               );
             })}
-            <li className="agendaEndRow">
-              <div className="agendaMeta">
-                <span className="badge agendaEndBadge">Sitzungsende</span>
-              </div>
-              <div className="agendaActions">
-                <span className="duration agendaEndTime">{scheduleTiming.sessionEndLabel}</span>
-              </div>
-            </li>
+            {hasRealAgendaItems ? (
+              <li className="agendaEndRow">
+                <div className="agendaMeta">
+                  <span className="badge agendaEndBadge">Sitzungsende</span>
+                </div>
+                <div className={isAudienceView ? "agendaActions audienceAgendaActions" : "agendaActions"}>
+                  <span className="duration agendaEndTime">{scheduleTiming.sessionEndLabel}</span>
+                </div>
+              </li>
+            ) : null}
           </ul>
         </article>
 
-        <article className="asRunCard">
+        {!isAudienceView ? <article className="asRunCard">
           <div className="asRunHead">
             <div>
               <h2>Gesendete TOPs</h2>
@@ -2296,7 +2566,7 @@ function App() {
               ))}
             </ul>
           )}
-        </article>
+        </article> : null}
       </section>
 
       {isSettingsOpen ? (
@@ -2412,7 +2682,8 @@ function App() {
             <p className="helpText">
               Oben links stehen Datum und Ort. In der Mitte stehen Haupttitel und Untertitel der Sitzung (Untertitel kommt aus
               Excel-Zelle A4). Unter der Trennlinie zeigt die linke Seite aktuelle Uhrzeit, Sitzungszeit und Prognose. Rechts
-              siehst du den aktiven TOP, die laufende TOP-Zeit und den Countdown zur geplanten Dauer.
+              siehst du den aktiven TOP, die laufende TOP-Zeit und den Countdown zur geplanten Dauer. Wenn ein externer
+              Monitor erkannt wird, öffnet sich dort automatisch eine reduzierte Beamer-Ansicht ohne Operator-Bedienelemente.
             </p>
 
             <h4 className="helpSectionTitle">2) Session-Steuerung</h4>
@@ -2436,7 +2707,8 @@ function App() {
             <p className="helpText">
               Der aktuelle TOP ist gelb/grün markiert, der nächste TOP orange. Bereits gesendete Einträge werden ausgegraut.
               Zukünftige Einträge lassen sich mit den Pfeilen umsortieren und über <strong>Halt</strong> temporär sperren.
-              Pausenzeilen sind leuchtend gelb dargestellt und verhalten sich wie normale Agendaeinträge.
+              Pausenzeilen sind leuchtend gelb dargestellt und verhalten sich wie normale Agendaeinträge. Ohne Import zeigt die
+              Liste standardmäßig Hinweise zum Agenda-Import.
             </p>
 
             <h4 className="helpSectionTitle">5) Text- und Zeitbearbeitung</h4>
