@@ -533,6 +533,79 @@ p {
   justify-content: space-between;
   gap: 0.6rem;
   align-items: center;
+  position: relative;
+  transition: margin 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+
+.agendaItem.draggableItem {
+  cursor: grab;
+}
+
+.agendaItem.draggableItem:hover {
+  border-color: #9ebce0;
+  box-shadow: 0 0 0 2px rgb(29 92 151 / 8%);
+}
+
+.agendaList.draggingActive .agendaItem.draggableItem {
+  cursor: grabbing;
+}
+
+.agendaItem.draggingItem {
+  opacity: 0.45;
+  cursor: grabbing;
+  border-style: dashed;
+  border-color: #7b99bd;
+  background: #eff5fc;
+}
+
+.agendaItem.dropBefore {
+  margin-top: 0.75rem;
+  box-shadow: inset 0 4px 0 #1d5c97, 0 2px 8px rgb(29 92 151 / 12%);
+  border-color: #1d5c97;
+  background: #f4f8ff;
+}
+
+.agendaItem.dropAfter {
+  margin-bottom: 0.75rem;
+  box-shadow: inset 0 -4px 0 #1d5c97, 0 2px 8px rgb(29 92 151 / 12%);
+  border-color: #1d5c97;
+  background: #f4f8ff;
+}
+
+.dragHandle {
+  color: #5b7390;
+  font-size: 1.2rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.15rem;
+  user-select: none;
+  cursor: grab;
+}
+
+.agendaList.draggingActive .dragHandle {
+  color: #1d5c97;
+}
+
+.dropHint {
+  position: absolute;
+  right: 0.7rem;
+  padding: 0.08rem 0.52rem;
+  border-radius: 999px;
+  background: #1d5c97;
+  color: #fff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.dropHint.top {
+  top: -0.95rem;
+}
+
+.dropHint.bottom {
+  bottom: -0.95rem;
 }
 
 .agendaItem.current {

@@ -1,4 +1,13 @@
-import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -41,6 +50,7 @@ type AsRunEntry = {
 
 type AsRunFilter = "completed" | "all";
 type ImportedSheetData = ImportedSheet["data"];
+type DropPosition = "before" | "after";
 
 const audienceViewQueryParam = "view";
 const audienceViewQueryValue = "audience";
@@ -75,10 +85,10 @@ function createDefaultAgenda(): AgendaItem[] {
 const initialAgenda: AgendaItem[] = createDefaultAgenda();
 
 const movableStates: AgendaState[] = ["planned", "hold"];
-const defaultMeetingTitle = "135. PTKO";
+const defaultMeetingTitle = "";
 const defaultMeetingSubtitle = "";
-const defaultMeetingDateLabel = "01. Oktober";
-const defaultMeetingLocation = "Hamburg";
+const defaultMeetingDateLabel = "";
+const defaultMeetingLocation = "";
 const maxImportFileSizeBytes = 5 * 1024 * 1024;
 const maxImportSheetCount = 5;
 const maxImportCellCount = 20_000;
@@ -228,8 +238,8 @@ function normalizePersistedSession(rawRecord: Record<string, unknown>): Persiste
     currentItemStartedAt: parsedCurrentItemId ? readNullableNumber(rawRecord.currentItemStartedAt) : null,
     meetingTitle: sanitizeImportedText(String(rawRecord.meetingTitle ?? defaultMeetingTitle), 120) || defaultMeetingTitle,
     meetingSubtitle: sanitizeImportedText(String(rawRecord.meetingSubtitle ?? defaultMeetingSubtitle), 160),
-    meetingDate: sanitizeImportedText(String(rawRecord.meetingDate ?? defaultMeetingDateLabel), 80) || defaultMeetingDateLabel,
-    meetingLocation: sanitizeImportedText(String(rawRecord.meetingLocation ?? defaultMeetingLocation), 120) || defaultMeetingLocation,
+    meetingDate: sanitizeImportedText(String(rawRecord.meetingDate ?? defaultMeetingDateLabel), 80),
+    meetingLocation: sanitizeImportedText(String(rawRecord.meetingLocation ?? defaultMeetingLocation), 120),
   };
 }
 
@@ -572,7 +582,7 @@ function hasUnexpectedAgendaColumns(sheet: ImportedSheetData, row: number): bool
     return false;
   }
 
-  for (let columnIndex = 4; columnIndex < rowValues.length; columnIndex += 1) {
+  for (let columnIndex = 5; columnIndex < rowValues.length; columnIndex += 1) {
     const value = rowValues[columnIndex];
     if (value === null || value === undefined) {
       continue;
@@ -610,7 +620,7 @@ function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
     }
 
     if (hasUnexpectedAgendaColumns(sheet, row)) {
-      throw new Error(`Unerwartete Daten in Spalten rechts von D (Zeile ${row}).`);
+      throw new Error(`Unerwartete Daten in Spalten rechts von E (Zeile ${row}).`);
     }
 
     if (topValue.length > maxAgendaTopLength) {
@@ -684,6 +694,9 @@ function ensurePdfExtension(path: string): string {
 function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const agendaScrollAreaRef = useRef<HTMLElement | null>(null);
+  const draggedItemIdRef = useRef<string | null>(null);
+  const dragOverTargetRef = useRef<{ itemId: string; position: DropPosition } | null>(null);
+  const mouseDragActiveRef = useRef(false);
   const appVersion = __APP_VERSION__;
   const isAudienceView = useMemo(() => {
     const query = new URLSearchParams(window.location.search);
@@ -720,6 +733,9 @@ function App() {
   const [editingTitleItemId, setEditingTitleItemId] = useState<string | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const [savedSessionCandidate, setSavedSessionCandidate] = useState<PersistedSession | null>(null);
+  const [pendingMoveFocus, setPendingMoveFocus] = useState<{ itemId: string; direction: -1 | 1 } | null>(null);
+  const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<{ itemId: string; position: DropPosition } | null>(null);
 
   const hasRealAgendaItems = useMemo(
     () => agenda.some((item) => item.kind === "topic" || item.kind === "break"),
@@ -1536,6 +1552,40 @@ function App() {
     );
   }, [agenda, meetingDate, meetingLocation, meetingSubtitle, meetingTitle]);
 
+  const resetAgendaForImport = useCallback(() => {
+    const resetTimestamp = Date.now();
+
+    setAgenda(initialAgenda);
+    setMeetingTitle(defaultMeetingTitle);
+    setMeetingSubtitle(defaultMeetingSubtitle);
+    setMeetingDate(defaultMeetingDateLabel);
+    setMeetingLocation(defaultMeetingLocation);
+    setOnAir(false);
+    setIsPaused(false);
+    setPauseStartedAtMs(null);
+    setSessionPausedMsTotal(0);
+    setCurrentItemPausedMsTotal(0);
+    setSessionStartedAt(null);
+    setSessionStoppedAtMs(null);
+    setCurrentItemId(null);
+    setCurrentItemStartedAt(null);
+    setCurrentItemStoppedAtMs(null);
+    setEditingDurationItemId(null);
+    setEditingDurationValue("");
+    setEditingTitleItemId(null);
+    setEditingTitleValue("");
+    setAsRunFilter("all");
+    setPendingMoveFocus(null);
+    setDraggedItemId(null);
+    draggedItemIdRef.current = null;
+    dragOverTargetRef.current = null;
+    mouseDragActiveRef.current = false;
+    setDragOverTarget(null);
+    setNowMs(resetTimestamp);
+    clearSavedSession();
+    setSavedSessionCandidate(null);
+  }, [clearSavedSession]);
+
   const triggerAgendaImport = useCallback(() => {
     importInputRef.current?.click();
   }, []);
@@ -1607,44 +1657,30 @@ function App() {
           );
         }
 
-        const importedTitle = sanitizeImportedText(readCellText(firstSheetData, "A1"), 80) || meetingTitle;
-        const importedSubtitle = sanitizeImportedText(readCellText(firstSheetData, "A4"), 160);
+        const importedTitle = sanitizeImportedText(readCellText(firstSheetData, "A1"), 80) || defaultMeetingTitle;
+        const importedSubtitle = sanitizeImportedText(readCellText(firstSheetData, "A4"), 160) || defaultMeetingSubtitle;
         const importedLocation =
           sanitizeImportedText(readCellText(firstSheetData, "B2"), 80) ||
           sanitizeImportedText(readLabeledValue(firstSheetData, /ort/i), 80) ||
-          meetingLocation;
+          defaultMeetingLocation;
         const importedDate =
+          sanitizeImportedText(readCellText(firstSheetData, "B3"), 80) ||
+          sanitizeImportedText(readLabeledValue(firstSheetData, /datum/i), 80) ||
           sanitizeImportedText(readCellText(firstSheetData, "C2"), 80) ||
-          sanitizeImportedText(readLabeledValue(firstSheetData, /datum|zeit/i), 80) ||
-          meetingDate;
+          defaultMeetingDateLabel;
+
+        resetAgendaForImport();
 
         setAgenda(importedAgenda);
         setMeetingTitle(importedTitle);
         setMeetingSubtitle(importedSubtitle);
         setMeetingDate(importedDate);
         setMeetingLocation(importedLocation);
-        clearSavedSession();
-        setSavedSessionCandidate(null);
-
-        setOnAir(false);
-        setIsPaused(false);
-        setPauseStartedAtMs(null);
-        setSessionPausedMsTotal(0);
-        setCurrentItemPausedMsTotal(0);
-        setSessionStartedAt(null);
-        setSessionStoppedAtMs(null);
-        setCurrentItemId(null);
-        setCurrentItemStartedAt(null);
-        setCurrentItemStoppedAtMs(null);
-        setEditingDurationItemId(null);
-        setEditingDurationValue("");
-        setAsRunFilter("all");
-        setNowMs(Date.now());
 
         setImportInfo(`Import erfolgreich (${importedAgenda.length} TOPs).`);
       } catch (error) {
         console.error("Agenda import failed", error);
-        setImportInfo("Import fehlgeschlagen. Bitte Datei und Format prüfen (A=TOP, B=Titel, C=Dauer, D=Tag).");
+        setImportInfo("Import fehlgeschlagen. Bitte Datei und Format prüfen (A=TOP, B=Titel, C=Dauer, D=Tag, optional E=Uhrzeit).");
       } finally {
         event.target.value = "";
       }
@@ -1652,11 +1688,8 @@ function App() {
     [
       hasCustomizedAgendaSetup,
       hasSessionRuntimeData,
-      meetingDate,
-      meetingLocation,
-      meetingTitle,
+      resetAgendaForImport,
       savedSessionCandidate,
-      clearSavedSession,
     ],
   );
 
@@ -1768,8 +1801,15 @@ function App() {
   }, [asRunEntries, meetingDate, meetingLocation, meetingTitle, nowMs]);
 
   const moveFutureItem = useCallback(
-    (index: number, direction: -1 | 1) => {
+    (itemId: string, direction: -1 | 1) => {
+      let moved = false;
+
       setAgenda((previous) => {
+        const index = previous.findIndex((item) => item.id === itemId);
+        if (index < 0) {
+          return previous;
+        }
+
         const targetIndex = index + direction;
         if (targetIndex < 0 || targetIndex >= previous.length) {
           return previous;
@@ -1795,11 +1835,231 @@ function App() {
         const source = swapped[index];
         swapped[index] = swapped[targetIndex];
         swapped[targetIndex] = source;
+        moved = true;
         return normalizeOrder(swapped);
+      });
+
+      if (moved) {
+        setPendingMoveFocus({ itemId, direction });
+      }
+    },
+    [currentItemId],
+  );
+
+  const moveFutureItemByDragDrop = useCallback(
+    (itemId: string, targetItemId: string, position: DropPosition) => {
+      setAgenda((previous) => {
+        const sourceIndex = previous.findIndex((item) => item.id === itemId);
+        const targetIndex = previous.findIndex((item) => item.id === targetItemId);
+
+        if (sourceIndex < 0 || targetIndex < 0) {
+          return previous;
+        }
+
+        const currentIndexInPrevious = currentItemId
+          ? previous.findIndex((item) => item.id === currentItemId)
+          : -1;
+        const firstFutureIndex = currentIndexInPrevious + 1;
+
+        if (sourceIndex < firstFutureIndex || targetIndex < firstFutureIndex) {
+          return previous;
+        }
+
+        const sourceItem = previous[sourceIndex];
+        const targetItem = previous[targetIndex];
+        if (!sourceItem || !targetItem) {
+          return previous;
+        }
+
+        if (!movableStates.includes(sourceItem.state) || !movableStates.includes(targetItem.state)) {
+          return previous;
+        }
+
+        const reordered = [...previous];
+        const [movedItem] = reordered.splice(sourceIndex, 1);
+        if (!movedItem) {
+          return previous;
+        }
+
+        let insertionIndex = targetIndex + (position === "after" ? 1 : 0);
+        if (sourceIndex < insertionIndex) {
+          insertionIndex -= 1;
+        }
+
+        const boundedInsertionIndex = Math.max(firstFutureIndex, Math.min(insertionIndex, reordered.length));
+        if (boundedInsertionIndex === sourceIndex) {
+          return previous;
+        }
+
+        reordered.splice(boundedInsertionIndex, 0, movedItem);
+        return normalizeOrder(reordered);
       });
     },
     [currentItemId],
   );
+
+  const beginMouseDrag = useCallback(
+    (event: ReactMouseEvent<HTMLLIElement>, itemId: string, canDragItem: boolean) => {
+      if (!canDragItem || event.button !== 0) {
+        return;
+      }
+
+      const targetElement = event.target as HTMLElement | null;
+      if (targetElement?.closest("button, input, textarea, select, .title.editable, .duration.editable, .titleInput, .durationInput")) {
+        return;
+      }
+
+      event.preventDefault();
+      mouseDragActiveRef.current = true;
+      draggedItemIdRef.current = itemId;
+      setDraggedItemId(itemId);
+      setDragOverTarget(null);
+    },
+    [],
+  );
+
+  const resolveDropTargetFromPointer = useCallback(
+    (clientY: number, sourceItemId: string): { itemId: string; position: DropPosition } | null => {
+      const rows = Array.from(document.querySelectorAll<HTMLLIElement>("li[data-item-id]"));
+      const sourceIndex = agenda.findIndex((item) => item.id === sourceItemId);
+      const currentIndexInAgenda = currentItemId ? agenda.findIndex((item) => item.id === currentItemId) : -1;
+      const firstFutureIndex = currentIndexInAgenda + 1;
+
+      if (sourceIndex < firstFutureIndex) {
+        return null;
+      }
+
+      const allowedRows = rows.filter((row) => {
+        const itemId = row.dataset.itemId;
+        if (!itemId || itemId === sourceItemId) {
+          return false;
+        }
+
+        const index = agenda.findIndex((item) => item.id === itemId);
+        if (index < firstFutureIndex) {
+          return false;
+        }
+
+        const item = agenda[index];
+        return item ? item.kind !== "placeholder" && movableStates.includes(item.state) : false;
+      });
+
+      if (allowedRows.length === 0) {
+        return null;
+      }
+
+      for (const row of allowedRows) {
+        const rect = row.getBoundingClientRect();
+        const rowItemId = row.dataset.itemId;
+        if (!rowItemId) {
+          continue;
+        }
+
+        const midpoint = rect.top + rect.height / 2;
+        if (clientY < midpoint) {
+          return {
+            itemId: rowItemId,
+            position: "before",
+          };
+        }
+
+        if (clientY <= rect.bottom) {
+          return {
+            itemId: rowItemId,
+            position: "after",
+          };
+        }
+      }
+
+      const lastRow = allowedRows[allowedRows.length - 1];
+      const lastRowItemId = lastRow?.dataset.itemId;
+      if (!lastRowItemId) {
+        return null;
+      }
+
+      return {
+        itemId: lastRowItemId,
+        position: "after",
+      };
+    },
+    [agenda, currentItemId],
+  );
+
+  useEffect(() => {
+    dragOverTargetRef.current = dragOverTarget;
+  }, [dragOverTarget]);
+
+  useEffect(() => {
+    if (!draggedItemId || !mouseDragActiveRef.current) {
+      return;
+    }
+
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const sourceItemId = draggedItemIdRef.current ?? draggedItemId;
+      if (!sourceItemId) {
+        return;
+      }
+
+      const pointerTarget = resolveDropTargetFromPointer(event.clientY, sourceItemId);
+      if (!pointerTarget) {
+        setDragOverTarget(null);
+        return;
+      }
+
+      setDragOverTarget((previous) => {
+        if (previous?.itemId === pointerTarget.itemId && previous.position === pointerTarget.position) {
+          return previous;
+        }
+
+        return pointerTarget;
+      });
+    };
+
+    const handleMouseUp = () => {
+      const sourceItemId = draggedItemIdRef.current ?? draggedItemId;
+      const target = dragOverTargetRef.current;
+
+      if (sourceItemId && target) {
+        moveFutureItemByDragDrop(sourceItemId, target.itemId, target.position);
+      }
+
+      mouseDragActiveRef.current = false;
+      draggedItemIdRef.current = null;
+      dragOverTargetRef.current = null;
+      setDraggedItemId(null);
+      setDragOverTarget(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [draggedItemId, moveFutureItemByDragDrop, resolveDropTargetFromPointer]);
+
+  useEffect(() => {
+    if (!pendingMoveFocus) {
+      return;
+    }
+
+    const escapedItemId = typeof CSS !== "undefined" && typeof CSS.escape === "function"
+      ? CSS.escape(pendingMoveFocus.itemId)
+      : pendingMoveFocus.itemId;
+
+    const selector = `button[data-move-id="${escapedItemId}"][data-move-dir="${pendingMoveFocus.direction}"]`;
+    const focusButton = document.querySelector<HTMLButtonElement>(selector);
+    if (focusButton) {
+      focusButton.focus();
+    }
+
+    setPendingMoveFocus(null);
+  }, [agenda, pendingMoveFocus]);
 
   const toggleHold = useCallback(
     (index: number) => {
@@ -2148,7 +2408,7 @@ function App() {
     }
 
     if (remainingSec > 0) {
-      return `+ ${formatCompact(remainingSec)}`;
+      return formatCompact(remainingSec);
     }
 
     if (remainingSec < 0) {
@@ -2209,13 +2469,13 @@ function App() {
               <img src={logoOriginal} alt="Sitzungsbuddy Logo" className="logoImage" />
             </div>
             <div className="dateArea">
-              <p>{meetingDate}</p>
-              <strong>{meetingLocation}</strong>
+              {meetingDate ? <p>{meetingDate}</p> : null}
+              {meetingLocation ? <strong>{meetingLocation}</strong> : null}
             </div>
           </div>
 
           <div className="titleArea">
-            <h1>{meetingTitle}</h1>
+            {meetingTitle ? <h1>{meetingTitle}</h1> : null}
             {meetingSubtitle ? <p className="meetingSubtitle">{meetingSubtitle}</p> : null}
           </div>
 
@@ -2364,7 +2624,7 @@ function App() {
           {!isAudienceView ? (
             <p className="hint">Zukünftige Punkte lassen sich umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
           ) : null}
-          <ul className="agendaList">
+          <ul className={draggedItemId ? "agendaList draggingActive" : "agendaList"}>
             {agenda.map((item, index) => {
               const isCurrent = item.id === currentItemId;
               const isNext = item.id === nextItemId;
@@ -2382,10 +2642,17 @@ function App() {
                     ? 0
                     : item.plannedDurationSec;
               const isFuture = currentIndex < 0 || index > currentIndex;
-              const canMoveUp = !isAudienceView && !isPlaceholderItem && isFuture && index > 0;
+              const firstFutureIndex = currentIndex < 0 ? 0 : currentIndex + 1;
+              const canMoveUp = !isAudienceView && !isPlaceholderItem && isFuture && index > firstFutureIndex;
               const canMoveDown = !isAudienceView && !isPlaceholderItem && isFuture && index < agenda.length - 1;
               const canToggleHold =
                 !isAudienceView && !isPlaceholderItem && isFuture && (item.state === "planned" || item.state === "hold");
+              const canDragItem =
+                !isAudienceView &&
+                !isPlaceholderItem &&
+                isFuture &&
+                movableStates.includes(item.state);
+              const dropIndicator = dragOverTarget?.itemId === item.id ? dragOverTarget.position : null;
               const scheduledStartLabel = scheduleTiming.startTimeByItemId.get(item.id) ?? "--:--:--";
               const agendaItemClassName = [
                 "agendaItem",
@@ -2394,6 +2661,10 @@ function App() {
                 isCurrent ? "current" : "",
                 isNext ? "next" : "",
                 isFinished ? "finished" : "",
+                canDragItem ? "draggableItem" : "",
+                draggedItemId === item.id ? "draggingItem" : "",
+                dropIndicator === "before" ? "dropBefore" : "",
+                dropIndicator === "after" ? "dropAfter" : "",
               ]
                 .filter(Boolean)
                 .join(" ");
@@ -2419,8 +2690,19 @@ function App() {
               );
 
               return (
-                <li key={item.id} className={agendaItemClassName} data-item-id={item.id}>
+                <li
+                  key={item.id}
+                  className={agendaItemClassName}
+                  data-item-id={item.id}
+                  onMouseDown={canDragItem ? (event) => beginMouseDrag(event, item.id, canDragItem) : undefined}
+                  title={canDragItem ? "Zum Verschieben ziehen und zwischen den Zeilen loslassen" : undefined}
+                  aria-grabbed={draggedItemId === item.id}
+                >
+                  {dropIndicator ? (
+                    <span className={dropIndicator === "before" ? "dropHint top" : "dropHint bottom"}>Hier einfügen</span>
+                  ) : null}
                   <div className="agendaMeta">
+                    {canDragItem ? <span className="dragHandle" aria-hidden="true">⋮⋮</span> : null}
                     {isPlaceholderItem ? (
                       item.title ? <span className="placeholderTitle">{item.title}</span> : <span className="placeholderSpacer" aria-hidden="true" />
                     ) : isBreakItem ? (
@@ -2466,16 +2748,20 @@ function App() {
                           <button
                             type="button"
                             className="mini"
-                            onClick={() => moveFutureItem(index, -1)}
+                            onClick={() => moveFutureItem(item.id, -1)}
                             disabled={!canMoveUp}
+                            data-move-id={item.id}
+                            data-move-dir="-1"
                           >
                             ↑
                           </button>
                           <button
                             type="button"
                             className="mini"
-                            onClick={() => moveFutureItem(index, 1)}
+                            onClick={() => moveFutureItem(item.id, 1)}
                             disabled={!canMoveDown}
+                            data-move-id={item.id}
+                            data-move-dir="1"
                           >
                             ↓
                           </button>
