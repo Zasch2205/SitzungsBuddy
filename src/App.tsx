@@ -783,7 +783,7 @@ function App() {
     return nextPlanned?.id ?? null;
   }, [agenda, currentIndex]);
 
-  const totalElapsedSec = useMemo(() => {
+  const totalElapsedMs = useMemo(() => {
     if (sessionStartedAt === null) {
       return 0;
     }
@@ -797,10 +797,12 @@ function App() {
     });
 
     const elapsedMs = referenceNow - sessionStartedAt - sessionPausedMsTotal;
-    return Math.max(0, Math.floor(elapsedMs / 1000));
+    return Math.max(0, elapsedMs);
   }, [isPaused, nowMs, onAir, pauseStartedAtMs, sessionPausedMsTotal, sessionStartedAt, sessionStoppedAtMs]);
 
-  const currentElapsedSec = useMemo(() => {
+  const totalElapsedSec = useMemo(() => Math.floor(totalElapsedMs / 1000), [totalElapsedMs]);
+
+  const currentElapsedMs = useMemo(() => {
     if (currentItemStartedAt === null) {
       return 0;
     }
@@ -814,7 +816,7 @@ function App() {
     });
 
     const elapsedMs = referenceNow - currentItemStartedAt - currentItemPausedMsTotal;
-    return Math.max(0, Math.floor(elapsedMs / 1000));
+    return Math.max(0, elapsedMs);
   }, [
     currentItemPausedMsTotal,
     currentItemStartedAt,
@@ -825,23 +827,28 @@ function App() {
     pauseStartedAtMs,
   ]);
 
+  const currentElapsedSec = useMemo(() => Math.floor(currentElapsedMs / 1000), [currentElapsedMs]);
+
   const remainingSec = currentItem ? currentItem.plannedDurationSec - currentElapsedSec : 0;
 
-  const plannedElapsedSec = useMemo(() => {
+  const plannedElapsedMs = useMemo(() => {
     return agenda.reduce((sum, item) => {
       if (item.state === "done") {
-        return sum + item.plannedDurationSec;
+        return sum + item.plannedDurationSec * 1000;
       }
 
       if (item.state === "live" && item.id === currentItemId) {
-        return sum + Math.min(currentElapsedSec, item.plannedDurationSec);
+        return sum + Math.min(currentElapsedMs, item.plannedDurationSec * 1000);
       }
 
       return sum;
     }, 0);
-  }, [agenda, currentElapsedSec, currentItemId]);
+  }, [agenda, currentElapsedMs, currentItemId]);
 
-  const prognosisSec = totalElapsedSec - plannedElapsedSec;
+  const prognosisSec = useMemo(
+    () => Math.trunc((totalElapsedMs - plannedElapsedMs) / 1000),
+    [plannedElapsedMs, totalElapsedMs],
+  );
 
   const asRunEntries = useMemo<AsRunEntry[]>(() => {
     return agenda
