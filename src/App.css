@@ -284,6 +284,22 @@ p {
   gap: 0.65rem;
 }
 
+.moveControlInline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.moveControlButton {
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 0.65rem;
+  background: #5f7490;
+  color: #f4f8ff;
+  font-size: 1.65rem;
+  font-weight: 900;
+}
+
 .iconButton {
   border: 3px solid #0f1d2d;
   background: #a8b6c4;
@@ -614,6 +630,11 @@ p {
   box-shadow: inset 0 0 0 1px #d0ba54;
 }
 
+.agendaItem.moveModeItem {
+  border-color: #0f4d84;
+  box-shadow: 0 0 0 2px rgb(15 77 132 / 28%);
+}
+
 .agendaItem.current .badge {
   background: #e5f5df;
   color: #2c6336;
@@ -897,6 +918,15 @@ p {
   width: 2.8rem;
   height: 2.8rem;
   cursor: pointer;
+}
+
+.mini.moveModeToggle {
+  background: #5c738d;
+}
+
+.mini.moveModeToggle.active {
+  background: #0f4d84;
+  box-shadow: inset 0 0 0 2px #d5e9ff;
 }
 
 .mini:disabled {

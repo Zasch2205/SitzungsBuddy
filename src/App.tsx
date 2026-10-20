@@ -733,7 +733,7 @@ function App() {
   const [editingTitleItemId, setEditingTitleItemId] = useState<string | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const [savedSessionCandidate, setSavedSessionCandidate] = useState<PersistedSession | null>(null);
-  const [pendingMoveFocus, setPendingMoveFocus] = useState<{ itemId: string; direction: -1 | 1 } | null>(null);
+  const [movingItemId, setMovingItemId] = useState<string | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<{ itemId: string; position: DropPosition } | null>(null);
 
@@ -748,6 +748,32 @@ function App() {
   );
 
   const currentItem = currentIndex >= 0 ? agenda[currentIndex] : null;
+  const firstFutureIndex = currentIndex < 0 ? 0 : currentIndex + 1;
+
+  const movingItemIndex = useMemo(() => {
+    if (!movingItemId) {
+      return -1;
+    }
+
+    return agenda.findIndex((item) => item.id === movingItemId);
+  }, [agenda, movingItemId]);
+
+  const movingItem = movingItemIndex >= 0 ? agenda[movingItemIndex] : null;
+
+  const canMoveSelectedItemUp =
+    movingItem !== null &&
+    movingItem.kind !== "placeholder" &&
+    movableStates.includes(movingItem.state) &&
+    movingItemIndex > firstFutureIndex;
+
+  const canMoveSelectedItemDown =
+    movingItem !== null &&
+    movingItem.kind !== "placeholder" &&
+    movableStates.includes(movingItem.state) &&
+    movingItemIndex >= firstFutureIndex &&
+    movingItemIndex < agenda.length - 1 &&
+    movableStates.includes(agenda[movingItemIndex + 1]?.state ?? "planned") &&
+    (agenda[movingItemIndex + 1]?.kind ?? "placeholder") !== "placeholder";
 
   const nextItemId = useMemo(() => {
     const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
@@ -1575,7 +1601,7 @@ function App() {
     setEditingTitleItemId(null);
     setEditingTitleValue("");
     setAsRunFilter("all");
-    setPendingMoveFocus(null);
+    setMovingItemId(null);
     setDraggedItemId(null);
     draggedItemIdRef.current = null;
     dragOverTargetRef.current = null;
@@ -1802,8 +1828,6 @@ function App() {
 
   const moveFutureItem = useCallback(
     (itemId: string, direction: -1 | 1) => {
-      let moved = false;
-
       setAgenda((previous) => {
         const index = previous.findIndex((item) => item.id === itemId);
         if (index < 0) {
@@ -1835,15 +1859,44 @@ function App() {
         const source = swapped[index];
         swapped[index] = swapped[targetIndex];
         swapped[targetIndex] = source;
-        moved = true;
         return normalizeOrder(swapped);
       });
-
-      if (moved) {
-        setPendingMoveFocus({ itemId, direction });
-      }
     },
     [currentItemId],
+  );
+
+  const toggleMoveMode = useCallback(
+    (itemId: string) => {
+      setMovingItemId((previous) => {
+        if (previous === itemId) {
+          return null;
+        }
+
+        const index = agenda.findIndex((item) => item.id === itemId);
+        if (index < firstFutureIndex) {
+          return previous;
+        }
+
+        const candidate = agenda[index];
+        if (!candidate || candidate.kind === "placeholder" || !movableStates.includes(candidate.state)) {
+          return previous;
+        }
+
+        return itemId;
+      });
+    },
+    [agenda, firstFutureIndex],
+  );
+
+  const moveSelectedItem = useCallback(
+    (direction: -1 | 1) => {
+      if (!movingItemId) {
+        return;
+      }
+
+      moveFutureItem(movingItemId, direction);
+    },
+    [moveFutureItem, movingItemId],
   );
 
   const moveFutureItemByDragDrop = useCallback(
@@ -1986,6 +2039,23 @@ function App() {
   );
 
   useEffect(() => {
+    if (!movingItemId) {
+      return;
+    }
+
+    const selectedIndex = agenda.findIndex((item) => item.id === movingItemId);
+    if (selectedIndex < firstFutureIndex) {
+      setMovingItemId(null);
+      return;
+    }
+
+    const selectedItem = agenda[selectedIndex];
+    if (!selectedItem || selectedItem.kind === "placeholder" || !movableStates.includes(selectedItem.state)) {
+      setMovingItemId(null);
+    }
+  }, [agenda, firstFutureIndex, movingItemId]);
+
+  useEffect(() => {
     dragOverTargetRef.current = dragOverTarget;
   }, [dragOverTarget]);
 
@@ -2042,24 +2112,6 @@ function App() {
       window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [draggedItemId, moveFutureItemByDragDrop, resolveDropTargetFromPointer]);
-
-  useEffect(() => {
-    if (!pendingMoveFocus) {
-      return;
-    }
-
-    const escapedItemId = typeof CSS !== "undefined" && typeof CSS.escape === "function"
-      ? CSS.escape(pendingMoveFocus.itemId)
-      : pendingMoveFocus.itemId;
-
-    const selector = `button[data-move-id="${escapedItemId}"][data-move-dir="${pendingMoveFocus.direction}"]`;
-    const focusButton = document.querySelector<HTMLButtonElement>(selector);
-    if (focusButton) {
-      focusButton.focus();
-    }
-
-    setPendingMoveFocus(null);
-  }, [agenda, pendingMoveFocus]);
 
   const toggleHold = useCallback(
     (index: number) => {
@@ -2543,6 +2595,29 @@ function App() {
 
           {!isAudienceView ? <aside className="actionColumn">
             <div className="actionButtonRow">
+              <div className="moveControlInline">
+                <button
+                  type="button"
+                  className="iconButton moveControlButton"
+                  onClick={() => moveSelectedItem(-1)}
+                  disabled={!canMoveSelectedItemUp}
+                  aria-label="Ausgewählte Zeile nach oben bewegen"
+                  title="Ausgewählte Zeile nach oben bewegen"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="iconButton moveControlButton"
+                  onClick={() => moveSelectedItem(1)}
+                  disabled={!canMoveSelectedItemDown}
+                  aria-label="Ausgewählte Zeile nach unten bewegen"
+                  title="Ausgewählte Zeile nach unten bewegen"
+                >
+                  ↓
+                </button>
+              </div>
+
               <div className="actionInsertButtons">
                 <button
                   type="button"
@@ -2622,7 +2697,7 @@ function App() {
         <article className="agendaCard">
           <h2>Agenda</h2>
           {!isAudienceView ? (
-            <p className="hint">Zukünftige Punkte lassen sich umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
+            <p className="hint">Zukünftige Punkte lassen sich per Drag & Drop oder im Bewegen-Modus (↕ + ↑/↓) umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
           ) : null}
           <ul className={draggedItemId ? "agendaList draggingActive" : "agendaList"}>
             {agenda.map((item, index) => {
@@ -2642,9 +2717,12 @@ function App() {
                     ? 0
                     : item.plannedDurationSec;
               const isFuture = currentIndex < 0 || index > currentIndex;
-              const firstFutureIndex = currentIndex < 0 ? 0 : currentIndex + 1;
-              const canMoveUp = !isAudienceView && !isPlaceholderItem && isFuture && index > firstFutureIndex;
-              const canMoveDown = !isAudienceView && !isPlaceholderItem && isFuture && index < agenda.length - 1;
+              const canSetMoveMode =
+                !isAudienceView &&
+                !isPlaceholderItem &&
+                isFuture &&
+                movableStates.includes(item.state);
+              const isInMoveMode = movingItemId === item.id;
               const canToggleHold =
                 !isAudienceView && !isPlaceholderItem && isFuture && (item.state === "planned" || item.state === "hold");
               const canDragItem =
@@ -2661,6 +2739,7 @@ function App() {
                 isCurrent ? "current" : "",
                 isNext ? "next" : "",
                 isFinished ? "finished" : "",
+                isInMoveMode ? "moveModeItem" : "",
                 canDragItem ? "draggableItem" : "",
                 draggedItemId === item.id ? "draggingItem" : "",
                 dropIndicator === "before" ? "dropBefore" : "",
@@ -2747,23 +2826,13 @@ function App() {
                         <>
                           <button
                             type="button"
-                            className="mini"
-                            onClick={() => moveFutureItem(item.id, -1)}
-                            disabled={!canMoveUp}
-                            data-move-id={item.id}
-                            data-move-dir="-1"
+                            className={isInMoveMode ? "mini moveModeToggle active" : "mini moveModeToggle"}
+                            onClick={() => toggleMoveMode(item.id)}
+                            disabled={!canSetMoveMode}
+                            aria-label={isInMoveMode ? "Bewegen-Modus beenden" : "Zeile für Bewegen-Modus auswählen"}
+                            title={isInMoveMode ? "Bewegen-Modus beenden" : "Zeile für Bewegen-Modus auswählen"}
                           >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            className="mini"
-                            onClick={() => moveFutureItem(item.id, 1)}
-                            disabled={!canMoveDown}
-                            data-move-id={item.id}
-                            data-move-dir="1"
-                          >
-                            ↓
+                            ↕
                           </button>
                           <button
                             type="button"
