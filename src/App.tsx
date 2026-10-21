@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { availableMonitors, primaryMonitor } from "@tauri-apps/api/window";
+import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { save } from "@tauri-apps/plugin-dialog";
 import { jsPDF } from "jspdf";
@@ -698,10 +698,16 @@ function App() {
   const dragOverTargetRef = useRef<{ itemId: string; position: DropPosition } | null>(null);
   const mouseDragActiveRef = useRef(false);
   const appVersion = __APP_VERSION__;
+  const isTauriRuntime = "__TAURI_INTERNALS__" in window;
+  const isWindowsPlatform = useMemo(
+    () => isTauriRuntime && window.navigator.userAgent.toLowerCase().includes("windows"),
+    [isTauriRuntime],
+  );
   const isAudienceView = useMemo(() => {
     const query = new URLSearchParams(window.location.search);
     return query.get(audienceViewQueryParam) === audienceViewQueryValue;
   }, []);
+  const isExternalView = isAudienceView;
 
   const [agenda, setAgenda] = useState<AgendaItem[]>(initialAgenda);
   const [onAir, setOnAir] = useState(false);
@@ -915,6 +921,26 @@ function App() {
     };
   }, [agenda, sessionStartedAt]);
 
+  const nextPlannedBreakLabel = useMemo(() => {
+    const nextBreak = agenda.find((item, index) => {
+      if (item.kind !== "break") {
+        return false;
+      }
+
+      if (item.state === "done" || item.state === "skipped") {
+        return false;
+      }
+
+      return index > currentIndex;
+    });
+
+    if (!nextBreak) {
+      return "--:--:--";
+    }
+
+    return scheduleTiming.startTimeByItemId.get(nextBreak.id) ?? "--:--:--";
+  }, [agenda, currentIndex, scheduleTiming.startTimeByItemId]);
+
   const filteredAsRunEntries = useMemo(() => {
     if (asRunFilter === "completed") {
       return asRunEntries.filter((entry) => !entry.isLive);
@@ -946,7 +972,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (isAudienceView) {
+    if (isExternalView) {
       return;
     }
 
@@ -980,7 +1006,7 @@ function App() {
     currentItemPausedMsTotal,
     currentItemStartedAt,
     currentItemStoppedAtMs,
-    isAudienceView,
+    isExternalView,
     isPaused,
     meetingDate,
     meetingLocation,
@@ -994,7 +1020,7 @@ function App() {
   ]);
 
   useEffect(() => {
-    if (!isAudienceView) {
+    if (!isExternalView) {
       return;
     }
 
@@ -1035,16 +1061,16 @@ function App() {
       window.clearInterval(mirrorPolling);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [applySessionSnapshot, isAudienceView]);
+  }, [applySessionSnapshot, isExternalView]);
 
   useEffect(() => {
-    if (isAudienceView || !("__TAURI_INTERNALS__" in window)) {
+    if (isExternalView || !isTauriRuntime) {
       return;
     }
 
     let active = true;
 
-    const ensureAudienceWindow = async () => {
+    const ensureBeamerWindow = async () => {
       if (!active) {
         return;
       }
@@ -1077,7 +1103,7 @@ function App() {
         const workPosition = externalMonitor.workArea.position.toLogical(externalMonitor.scaleFactor);
         const workSize = externalMonitor.workArea.size.toLogical(externalMonitor.scaleFactor);
 
-        const audienceWindow = new WebviewWindow(audienceWindowLabel, {
+        const beamerWindow = new WebviewWindow(audienceWindowLabel, {
           title: "Sitzungsbuddy · Beamer",
           url: `/?${audienceViewQueryParam}=${audienceViewQueryValue}`,
           x: Math.round(workPosition.x),
@@ -1088,9 +1114,9 @@ function App() {
           resizable: true,
         });
 
-        audienceWindow.once("tauri://created", async () => {
+        beamerWindow.once("tauri://created", async () => {
           try {
-            await audienceWindow.setFullscreen(true);
+            await beamerWindow.setFullscreen(true);
           } catch {
             // ignore fullscreen errors
           }
@@ -1100,16 +1126,16 @@ function App() {
       }
     };
 
-    void ensureAudienceWindow();
+    void ensureBeamerWindow();
     const monitorPolling = window.setInterval(() => {
-      void ensureAudienceWindow();
+      void ensureBeamerWindow();
     }, 5000);
 
     return () => {
       active = false;
       window.clearInterval(monitorPolling);
     };
-  }, [isAudienceView]);
+  }, [isExternalView, isTauriRuntime]);
 
   const clearSavedSession = useCallback(() => {
     try {
@@ -1147,7 +1173,7 @@ function App() {
   }, [clearSavedSession]);
 
   useEffect(() => {
-    if (isAudienceView) {
+    if (isExternalView) {
       return;
     }
 
@@ -1171,10 +1197,10 @@ function App() {
     }
 
     setSavedSessionCandidate(parsed);
-  }, [clearSavedSession, isAudienceView]);
+  }, [clearSavedSession, isExternalView]);
 
   useEffect(() => {
-    if (!isAudienceView || !currentItemId) {
+    if (!isExternalView || !currentItemId) {
       return;
     }
 
@@ -1217,10 +1243,10 @@ function App() {
       window.cancelAnimationFrame(rafA);
       window.cancelAnimationFrame(rafB);
     };
-  }, [agenda.length, currentItemId, isAudienceView]);
+  }, [agenda.length, currentItemId, isExternalView]);
 
   useEffect(() => {
-    if (isAudienceView || !("__TAURI_INTERNALS__" in window)) {
+    if (isExternalView || !isTauriRuntime) {
       return;
     }
 
@@ -1233,10 +1259,10 @@ function App() {
         // ignore cleanup failures
       });
     };
-  }, [isAudienceView, onAir]);
+  }, [isExternalView, isTauriRuntime, onAir]);
 
   const advanceToNextItem = useCallback(() => {
-    if (isAudienceView || !onAir || isPaused) {
+    if (isExternalView || !onAir || isPaused) {
       return;
     }
 
@@ -1277,10 +1303,10 @@ function App() {
     setCurrentItemPausedMsTotal(0);
     setCurrentItemStoppedAtMs(nextItemId ? null : timestamp);
     setNowMs(timestamp);
-  }, [agenda, currentItemId, isAudienceView, isPaused, onAir]);
+  }, [agenda, currentItemId, isExternalView, isPaused, onAir]);
 
   const rewindToPreviousItem = useCallback(() => {
-    if (isAudienceView || !onAir || isPaused) {
+    if (isExternalView || !onAir || isPaused) {
       return;
     }
 
@@ -1331,10 +1357,10 @@ function App() {
     setCurrentItemPausedMsTotal(previousItem.actualPausedMsTotal);
     setCurrentItemStoppedAtMs(null);
     setNowMs(timestamp);
-  }, [agenda, currentItemId, isAudienceView, isPaused, onAir]);
+  }, [agenda, currentItemId, isExternalView, isPaused, onAir]);
 
   const startOnAir = useCallback(() => {
-    if (isAudienceView) {
+    if (isExternalView) {
       return;
     }
 
@@ -1388,10 +1414,10 @@ function App() {
     setCurrentItemStartedAt(timestamp);
     setCurrentItemPausedMsTotal(0);
     setCurrentItemStoppedAtMs(null);
-  }, [agenda, currentItemId, hasRealAgendaItems, isAudienceView, onAir, sessionStartedAt]);
+  }, [agenda, currentItemId, hasRealAgendaItems, isExternalView, onAir, sessionStartedAt]);
 
   const togglePauseSession = useCallback(() => {
-    if (isAudienceView || !onAir) {
+    if (isExternalView || !onAir) {
       return;
     }
 
@@ -1425,15 +1451,15 @@ function App() {
         }),
       );
     }
-  }, [currentItemId, isAudienceView, isPaused, onAir, pauseStartedAtMs]);
+  }, [currentItemId, isExternalView, isPaused, onAir, pauseStartedAtMs]);
 
   const stopSession = useCallback(() => {
-    if (isAudienceView || (!onAir && !isPaused)) {
+    if (isExternalView || (!onAir && !isPaused)) {
       return;
     }
 
     setIsStopConfirmOpen(true);
-  }, [isAudienceView, isPaused, onAir]);
+  }, [isExternalView, isPaused, onAir]);
 
   const cancelStopSession = useCallback(() => {
     setIsStopConfirmOpen(false);
@@ -1557,6 +1583,26 @@ function App() {
 
     setIsSettingsOpen(false);
   }, [settingsDateDraft, settingsLocationDraft, settingsTitleDraft]);
+
+  const minimizeWindow = useCallback(() => {
+    if (!isTauriRuntime || isExternalView) {
+      return;
+    }
+
+    void getCurrentWindow().minimize().catch((error) => {
+      console.warn("Fenster konnte nicht minimiert werden.", error);
+    });
+  }, [isExternalView, isTauriRuntime]);
+
+  const closeWindow = useCallback(() => {
+    if (!isTauriRuntime || isExternalView) {
+      return;
+    }
+
+    void getCurrentWindow().close().catch((error) => {
+      console.warn("Fenster konnte nicht geschlossen werden.", error);
+    });
+  }, [isExternalView, isTauriRuntime]);
 
   const hasSessionRuntimeData = useMemo(() => {
     if (onAir || isPaused || sessionStartedAt !== null || currentItemId !== null) {
@@ -2364,7 +2410,7 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
-        isAudienceView ||
+        isExternalView ||
         event.code !== "Space" ||
         isSettingsOpen ||
         isStopConfirmOpen ||
@@ -2375,7 +2421,7 @@ function App() {
       }
 
       const target = event.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName)) {
+      if (target && (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable)) {
         return;
       }
 
@@ -2391,7 +2437,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isAudienceView, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
+  }, [advanceToNextItem, isExternalView, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -2575,6 +2621,29 @@ function App() {
               </div>
             ) : null}
           </div>
+
+          {isWindowsPlatform && !isExternalView ? (
+            <div className="windowControls" role="group" aria-label="Fenstersteuerung">
+              <button
+                type="button"
+                className="windowControlButton"
+                onClick={minimizeWindow}
+                aria-label="Fenster minimieren"
+                title="Minimieren"
+              >
+                —
+              </button>
+              <button
+                type="button"
+                className="windowControlButton close"
+                onClick={closeWindow}
+                aria-label="Anwendung schließen"
+                title="Schließen"
+              >
+                ✕
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="headerDivider" />
@@ -2594,10 +2663,34 @@ function App() {
             <p className="fieldLabel">Aktueller TOP</p>
             <div className="topBox">{currentTopLabel}</div>
 
-            <p className="fieldLabel">Zeit des TOP</p>
-            <div className={pausedValueBoxClass}>{currentItem ? formatClock(currentElapsedSec) : "--:--:--"}</div>
+            {isAudienceView ? (
+              <div className="audienceTimingRow">
+                <section className="audienceTimingBlock audienceCurrentTimeBlock">
+                  <p className="fieldLabel audienceFieldLabel">Zeit des TOP</p>
+                  <div className={`${pausedValueBoxClass} audienceTopTimeBox`}>
+                    {currentItem ? formatClock(currentElapsedSec) : "--:--:--"}
+                  </div>
+                  <p className={`deltaValue ${countdownClass} audienceCountdown`}>{countdownLabel}</p>
+                </section>
 
-            <p className={`deltaValue ${countdownClass}`}>{countdownLabel}</p>
+                <section className="audienceTimingBlock audienceInfoBox">
+                  <p className="fieldLabel audienceFieldLabel">Geplantes Ende der Sitzung</p>
+                  <div className="valueBox audienceInfoValue">{scheduleTiming.sessionEndLabel}</div>
+                </section>
+
+                <section className="audienceTimingBlock audienceInfoBox">
+                  <p className="fieldLabel audienceFieldLabel">Geplante Pause</p>
+                  <div className="valueBox audienceInfoValue">{nextPlannedBreakLabel}</div>
+                </section>
+              </div>
+            ) : (
+              <>
+                <p className="fieldLabel">Zeit des TOP</p>
+                <div className={pausedValueBoxClass}>{currentItem ? formatClock(currentElapsedSec) : "--:--:--"}</div>
+
+                <p className={`deltaValue ${countdownClass}`}>{countdownLabel}</p>
+              </>
+            )}
           </section>
 
           {!isAudienceView ? <aside className="actionColumn">
@@ -3046,6 +3139,10 @@ function App() {
               Excel-Zelle A4). Unter der Trennlinie zeigt die linke Seite aktuelle Uhrzeit, Sitzungszeit und Prognose. Rechts
               siehst du den aktiven TOP, die laufende TOP-Zeit und den Countdown zur geplanten Dauer. Wenn ein externer
               Monitor erkannt wird, öffnet sich dort automatisch eine reduzierte Beamer-Ansicht ohne Operator-Bedienelemente.
+              Diese Anzeige macht den aktuellen Sitzungsstand für alle Teilnehmenden transparent. In der Beamer-Ansicht siehst
+              du zusätzlich die Felder <strong>Geplantes Ende der Sitzung</strong> (berechnet aus Startzeit und Agenda) und
+              <strong> Geplante Pause</strong> (Uhrzeit der nächsten Pausenzeile); beide Werte werden bei Änderungen oder
+              Triggern automatisch aktualisiert.
             </p>
 
             <h4 className="helpSectionTitle">2) Session-Steuerung</h4>

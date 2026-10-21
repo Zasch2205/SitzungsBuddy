@@ -51,7 +51,7 @@ p {
 
 .headerTopRow {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   align-items: center;
   gap: 0.9rem;
 }
@@ -119,6 +119,38 @@ p {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.windowControls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-self: end;
+}
+
+.windowControlButton {
+  width: 2.55rem;
+  height: 2.2rem;
+  border: 2px solid #31465f;
+  border-radius: 0.5rem;
+  background: #d6dce4;
+  color: #11273f;
+  font-size: 1.2rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.windowControlButton.close {
+  background: #d47d89;
+  border-color: #8e1f31;
+  color: #fff;
+}
+
+.windowControlButton:hover {
+  filter: brightness(0.96);
 }
 
 .onAirButton {
@@ -236,6 +268,53 @@ p {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.audienceTimingRow {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.audienceTimingBlock {
+  display: grid;
+  justify-items: stretch;
+  align-content: start;
+  min-width: 0;
+  gap: 0.16rem;
+}
+
+.audienceCurrentTimeBlock {
+  justify-items: stretch;
+}
+
+.audienceCurrentTimeBlock .audienceFieldLabel {
+  text-align: center;
+}
+
+.audienceFieldLabel {
+  font-size: 0.96rem;
+  line-height: 1.1;
+}
+
+.audienceTopTimeBox {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 1rem;
+  justify-content: center;
+}
+
+.audienceCountdown {
+  width: 100%;
+  text-align: center;
+}
+
+.audienceInfoValue {
+  width: 100%;
+  min-width: 0;
+  font-size: clamp(1.2rem, 1.9vw, 1.9rem);
 }
 
 .deltaValue {
@@ -381,6 +460,10 @@ p {
   line-height: 1.2;
   color: #1b334d;
   text-align: right;
+}
+
+.audienceMode .rightColumn {
+  gap: 0.3rem;
 }
 
 .hiddenFileInput {
@@ -1011,7 +1094,8 @@ p {
 .settingsButton:focus-visible,
 .miniSessionButton:focus-visible,
 .mini:focus-visible,
-.onAirButton:focus-visible {
+.onAirButton:focus-visible,
+.windowControlButton:focus-visible {
   outline: 3px solid rgb(15 77 132 / 35%);
   outline-offset: 2px;
 }
@@ -1136,6 +1220,14 @@ p {
 
   .duration {
     font-size: 1.2rem;
+  }
+
+  .audienceTimingRow {
+    gap: 0.6rem;
+  }
+
+  .audienceFieldLabel {
+    font-size: 0.9rem;
   }
 }
 

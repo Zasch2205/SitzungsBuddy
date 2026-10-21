@@ -70,6 +70,14 @@ fn disable_sleep_blocker() {
     }
 }
 
+fn close_beamer_windows(app_handle: &tauri::AppHandle) {
+    for label in ["audience-view", "mirror-view"] {
+        if let Some(window) = app_handle.get_webview_window(label) {
+            let _ = window.close();
+        }
+    }
+}
+
 #[tauri::command]
 fn save_pdf_file(path: String, base64_data: String) -> Result<(), String> {
     let target_path = Path::new(&path);
@@ -106,9 +114,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 disable_sleep_blocker();
-                if let Some(audience_window) = window.app_handle().get_webview_window("audience-view") {
-                    let _ = audience_window.close();
-                }
+                close_beamer_windows(&window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![save_pdf_file, set_on_air_mode])
@@ -118,9 +124,7 @@ pub fn run() {
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
             disable_sleep_blocker();
-            if let Some(audience_window) = app_handle.get_webview_window("audience-view") {
-                let _ = audience_window.close();
-            }
+            close_beamer_windows(app_handle);
         }
     });
 }
