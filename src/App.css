@@ -731,45 +731,6 @@ p {
   bottom: -0.95rem;
 }
 
-.agendaItem.current {
-  background: #fff9cf;
-  border-color: #d0ba54;
-  box-shadow: inset 0 0 0 1px #d0ba54;
-}
-
-.agendaItem.current .badge {
-  background: #e5f5df;
-  color: #2c6336;
-}
-
-.agendaItem.current .order,
-.agendaItem.current .day,
-.agendaItem.current .scheduleTime,
-.agendaItem.current .top,
-.agendaItem.current .title,
-.agendaItem.current .duration {
-  color: #2c6336;
-}
-
-.agendaItem.next {
-  background: #fff0df;
-  border-color: #efc38c;
-}
-
-.agendaItem.next .badge {
-  background: #fff3e3;
-  color: #885025;
-}
-
-.agendaItem.next .order,
-.agendaItem.next .day,
-.agendaItem.next .scheduleTime,
-.agendaItem.next .top,
-.agendaItem.next .title,
-.agendaItem.next .duration {
-  color: #885025;
-}
-
 .agendaItem.finished {
   background: #f1f3f6;
   border-color: #d5dde7;
@@ -790,47 +751,19 @@ p {
 }
 
 .agendaItem.pauseItem,
-.agendaItem.pauseItem.current,
-.agendaItem.pauseItem.next,
 .agendaItem.pauseItem.finished {
-  background: #ffea4d;
-  border-color: #d6b600;
+  background: #e7d1ae;
+  border-color: #a67d50;
   box-shadow: none;
 }
 
-.agendaItem.pauseItem .badge,
-.agendaItem.pauseItem.current .badge,
-.agendaItem.pauseItem.next .badge,
-.agendaItem.pauseItem.finished .badge {
-  background: #ffd800;
-  color: #141414;
+.agendaItem.pauseItem .badge {
+  background: #f4e5cd;
+  color: #111;
 }
 
-.agendaItem.pauseItem .order,
-.agendaItem.pauseItem .day,
-.agendaItem.pauseItem .scheduleTime,
-.agendaItem.pauseItem .top,
-.agendaItem.pauseItem .title,
-.agendaItem.pauseItem .duration,
-.agendaItem.pauseItem.current .order,
-.agendaItem.pauseItem.current .day,
-.agendaItem.pauseItem.current .scheduleTime,
-.agendaItem.pauseItem.current .top,
-.agendaItem.pauseItem.current .title,
-.agendaItem.pauseItem.current .duration,
-.agendaItem.pauseItem.next .order,
-.agendaItem.pauseItem.next .day,
-.agendaItem.pauseItem.next .scheduleTime,
-.agendaItem.pauseItem.next .top,
-.agendaItem.pauseItem.next .title,
-.agendaItem.pauseItem.next .duration,
-.agendaItem.pauseItem.finished .order,
-.agendaItem.pauseItem.finished .day,
-.agendaItem.pauseItem.finished .scheduleTime,
-.agendaItem.pauseItem.finished .top,
-.agendaItem.pauseItem.finished .title,
-.agendaItem.pauseItem.finished .duration {
-  color: #141414;
+.agendaItem.pauseItem :is(.order, .day, .scheduleTime, .top, .title, .duration, .dragHandle) {
+  color: #111;
 }
 
 .agendaItem.headingItem,
@@ -859,6 +792,44 @@ p {
 .agendaItem.headingItem.finished .headingNumber,
 .agendaItem.headingItem.finished .title {
   opacity: 0.65;
+}
+
+.agendaItem.onHold {
+  background: #fff1a8;
+  border-color: #b99931;
+  box-shadow: none;
+}
+
+.agendaItem.onHold .badge {
+  background: #fff7d1;
+  color: #111;
+}
+
+.agendaItem.onHold :is(.order, .day, .scheduleTime, .top, .title, .duration, .headingNumber, .dragHandle) {
+  color: #111;
+}
+
+.agendaItem.next {
+  background: #79da90;
+  border-color: #2a7d44;
+  box-shadow: none;
+}
+
+.agendaItem.current {
+  background: #f26161;
+  border-color: #a62929;
+  box-shadow: inset 0 0 0 1px #a62929;
+}
+
+.agendaItem.next .badge,
+.agendaItem.current .badge {
+  background: rgb(255 255 255 / 55%);
+  color: #111;
+}
+
+.agendaItem.next :is(.order, .day, .scheduleTime, .top, .title, .duration, .headingNumber, .dragHandle),
+.agendaItem.current :is(.order, .day, .scheduleTime, .top, .title, .duration, .headingNumber, .dragHandle) {
+  color: #111;
 }
 
 .agendaItem.moveModeItem,

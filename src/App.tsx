@@ -2716,6 +2716,7 @@ function App() {
                 isPlaceholderItem ? "placeholderItem" : "",
                 isCurrent ? "current" : "",
                 isNext ? "next" : "",
+                item.state === "hold" ? "onHold" : "",
                 isFinished ? "finished" : "",
                 isInMoveMode ? "moveModeItem" : "",
                 canDragItem ? "draggableItem" : "",
@@ -3078,10 +3079,11 @@ function App() {
 
             <h4 className="helpSectionTitle">4) Agenda-Liste</h4>
             <p className="helpText">
-              Der aktuelle TOP ist gelb/grün markiert, der nächste TOP orange. Bereits gesendete Einträge werden ausgegraut.
+              Der laufende TOP oder die laufende Pause ist rot markiert, der nächste Eintrag grün. Auf Halt gesetzte Zeilen
+              sind hellgelb; Pausenzeilen ohne diese Zustände sind beige. Bereits gesendete normale TOPs werden ausgegraut.
               Zukünftige Einträge lassen sich umsortieren und über <strong>Halt</strong> temporär sperren.
               Per Rechtsklick kannst du eine noch nicht gesendete Position löschen; gesendete Positionen bleiben erhalten.
-              Pausenzeilen sind leuchtend gelb dargestellt und verhalten sich wie normale Agendaeinträge. Hellblaue
+              Pausenzeilen verhalten sich beim Triggern wie normale Agendaeinträge. Hellblaue
               Überschriften gliedern die Agenda, haben aber weder eine eigene Laufzeit noch eine Startuhrzeit. Ohne Import
               zeigt die Liste standardmäßig Hinweise zum Agenda-Import.
             </p>
@@ -3134,7 +3136,7 @@ function App() {
               erst mit <strong>OnAir</strong>.
             </p>
             <p className="helpText">
-              <strong>P = Pause:</strong> Steht in D ein P, wird die Zeile als leuchtend gelbe Pause importiert – genauso wie
+              <strong>P = Pause:</strong> Steht in D ein P, wird die Zeile als beige Pause importiert – genauso wie
               bei „Pause einfügen“. Der Text in B ist frei wählbar; bleibt B leer, heißt der Eintrag „Pause“. In C steht die
               geplante Länge in Minuten; ohne Angabe gelten fünf Minuten. Eine TOP-Nummer in A ist nicht nötig. Die Pause
               zählt bei der Berechnung des Sitzungsendes mit, kann wie ein normaler Eintrag getriggert werden und erscheint
