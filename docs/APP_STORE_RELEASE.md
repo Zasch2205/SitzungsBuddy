@@ -46,4 +46,4 @@ pkgutil --check-signature \
 
 Das `.pkg` wird mit der Apple-App **Transporter** zu App Store Connect hochgeladen. Dort kann der verarbeitete Build zunächst einer internen TestFlight-Gruppe zugeordnet werden. Für externe Testpersonen ist zusätzlich Apples Beta-Prüfung erforderlich.
 
-Vor einem erneuten Upload derselben App-Version muss die Build-Nummer (`bundle.macOS.bundleVersion` in der App-Store-Konfiguration) erhöht werden. Sie ist unabhängig von der sichtbaren Version `1.1.0`.
+Vor einem erneuten Upload derselben App-Version muss die Build-Nummer (`bundle.macOS.bundleVersion` in der App-Store-Konfiguration) erhöht werden. Sie ist unabhängig von der sichtbaren Version `1.2.0`.

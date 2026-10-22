@@ -623,6 +623,36 @@ p {
   gap: 0.6rem;
 }
 
+.agendaContextMenu {
+  position: fixed;
+  z-index: 30;
+  min-width: 12rem;
+  padding: 0.3rem;
+  border: 2px solid #9bb1c8;
+  border-radius: 0.65rem;
+  background: #fff;
+  box-shadow: 0 10px 24px rgb(13 28 46 / 22%);
+}
+
+.agendaContextMenu button {
+  width: 100%;
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  background: transparent;
+  color: #8e1f31;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agendaContextMenu button:hover,
+.agendaContextMenu button:focus-visible {
+  background: #fbe6eb;
+  outline: none;
+}
+
 .agendaItem {
   border: 2px solid #c8dcf5;
   border-radius: 0.75rem;
@@ -711,11 +741,6 @@ p {
   background: #fff9cf;
   border-color: #d0ba54;
   box-shadow: inset 0 0 0 1px #d0ba54;
-}
-
-.agendaItem.moveModeItem {
-  border-color: #0f4d84;
-  box-shadow: 0 0 0 2px rgb(15 77 132 / 28%);
 }
 
 .agendaItem.current .badge {
@@ -812,6 +837,41 @@ p {
 .agendaItem.pauseItem.finished .title,
 .agendaItem.pauseItem.finished .duration {
   color: #141414;
+}
+
+.agendaItem.headingItem,
+.agendaItem.headingItem.finished {
+  background: #e4effb;
+  border-color: #8fb3da;
+  box-shadow: none;
+}
+
+.agendaItem.headingItem .headingBadge {
+  background: #c8ddf4;
+  color: #234d78;
+}
+
+.agendaItem.headingItem .headingNumber,
+.agendaItem.headingItem .title {
+  color: #234d78;
+}
+
+.headingNumber {
+  font-size: 1.45rem;
+  font-weight: 800;
+}
+
+.agendaItem.headingItem.finished .headingBadge,
+.agendaItem.headingItem.finished .headingNumber,
+.agendaItem.headingItem.finished .title {
+  opacity: 0.65;
+}
+
+.agendaItem.moveModeItem,
+.agendaItem.pauseItem.moveModeItem,
+.agendaItem.headingItem.moveModeItem {
+  border-color: #0f4d84;
+  box-shadow: 0 0 0 2px rgb(15 77 132 / 28%);
 }
 
 .agendaEndRow {

@@ -20,7 +20,7 @@ import { fnv1aHash } from "./lib/checksum";
 import "./App.css";
 
 type AgendaState = "planned" | "live" | "hold" | "done" | "skipped";
-type AgendaKind = "topic" | "break" | "placeholder";
+type AgendaKind = "topic" | "break" | "heading" | "placeholder";
 
 type AgendaItem = {
   id: string;
@@ -51,6 +51,12 @@ type AsRunEntry = {
 type AsRunFilter = "completed" | "all";
 type ImportedSheetData = ImportedSheet["data"];
 type DropPosition = "before" | "after";
+type AgendaContextMenu = { itemId: string; x: number; y: number };
+type MoveSelection = { anchorId: string; itemIds: string[] };
+
+function isPlayableAgendaItem(item: AgendaItem): boolean {
+  return item.kind === "topic" || item.kind === "break";
+}
 
 const audienceViewQueryParam = "view";
 const audienceViewQueryValue = "audience";
@@ -159,7 +165,9 @@ function parseSavedAgenda(rawAgenda: unknown): AgendaItem[] | null {
     }
 
     const kind: AgendaKind =
-      rawItem.kind === "break" ? "break" : rawItem.kind === "placeholder" ? "placeholder" : "topic";
+      rawItem.kind === "break" || rawItem.kind === "heading" || rawItem.kind === "placeholder"
+        ? rawItem.kind
+        : "topic";
     const state: AgendaState =
       rawItem.state === "live" ||
       rawItem.state === "hold" ||
@@ -171,14 +179,14 @@ function parseSavedAgenda(rawAgenda: unknown): AgendaItem[] | null {
 
     const dayFallback = kind === "placeholder" ? "" : "Tag 1";
     const day = sanitizeImportedText(String(rawItem.day ?? dayFallback), 64) || dayFallback;
-    const topFallback = kind === "break" ? "PAUSE" : kind === "placeholder" ? "" : String(index + 1);
+    const topFallback = kind === "break" ? "PAUSE" : kind === "placeholder" || kind === "heading" ? "" : String(index + 1);
     const top = sanitizeImportedText(String(rawItem.top ?? topFallback), 64) || topFallback;
-    const titleFallback = kind === "break" ? "Pause" : kind === "placeholder" ? "" : `TOP ${top}`;
+    const titleFallback = kind === "break" ? "Pause" : kind === "heading" ? "Überschrift" : kind === "placeholder" ? "" : `TOP ${top}`;
     const title = sanitizeImportedText(String(rawItem.title ?? titleFallback), 200) || titleFallback;
 
-    const durationFallback = kind === "placeholder" ? 0 : 300;
+    const durationFallback = kind === "placeholder" || kind === "heading" ? 0 : 300;
     const durationSec = Math.round(readNonNegativeNumber(rawItem.plannedDurationSec, durationFallback));
-    const plannedDurationSec = kind === "placeholder" ? 0 : Math.max(60, durationSec);
+    const plannedDurationSec = kind === "placeholder" || kind === "heading" ? 0 : Math.max(60, durationSec);
 
     return {
       id: itemId,
@@ -350,7 +358,7 @@ function formatAgendaItemLabel(item: AgendaItem, style: "list" | "header" = "lis
     return item.title || "Pause";
   }
 
-  if (item.kind === "placeholder") {
+  if (item.kind === "placeholder" || item.kind === "heading") {
     return item.title;
   }
 
@@ -576,6 +584,17 @@ function findAgendaStartRow(sheet: ImportedSheetData): number {
   return 6;
 }
 
+function findFollowingDayLabel(sheet: ImportedSheetData, row: number): string | null {
+  for (let followingRow = row + 1; followingRow <= 600; followingRow += 1) {
+    const dayCell = getCellValue(sheet, followingRow, 4);
+    if (typeof dayCell === "number" || (typeof dayCell === "string" && /^\d+$/.test(dayCell.trim()))) {
+      return parseDayLabel(dayCell, readCellText(sheet, `A${followingRow}`));
+    }
+  }
+
+  return null;
+}
+
 function hasUnexpectedAgendaColumns(sheet: ImportedSheetData, row: number): boolean {
   const rowValues = sheet[row - 1];
   if (!Array.isArray(rowValues)) {
@@ -603,9 +622,13 @@ function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
 
   for (let row = startRow; row <= 600; row += 1) {
     const topValue = readCellText(sheet, `A${row}`);
-    const titleValue = readCellText(sheet, `B${row}`);
+    const importedTitle = readCellText(sheet, `B${row}`);
+    const dayCell = getCellValue(sheet, row, 4);
+    const property = typeof dayCell === "string" ? dayCell.trim().toUpperCase() : "";
+    const kind: AgendaKind = property === "P" ? "break" : property === "U" ? "heading" : "topic";
+    const titleValue = kind === "break" ? importedTitle || "Pause" : importedTitle;
 
-    if (!topValue && !titleValue) {
+    if (!topValue && !importedTitle && kind !== "break") {
       blankStreak += 1;
       if (blankStreak >= 20 && imported.length > 0) {
         break;
@@ -615,7 +638,7 @@ function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
 
     blankStreak = 0;
 
-    if (!topValue || !titleValue) {
+    if (!titleValue || (kind === "topic" && !topValue)) {
       continue;
     }
 
@@ -631,16 +654,23 @@ function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
       throw new Error(`TOP-Titel in Zeile ${row} ist zu lang (max. ${maxAgendaTitleLength} Zeichen).`);
     }
 
-    const durationSec = parseDurationCell(getCellValue(sheet, row, 3)) ?? 15 * 60;
-    if (durationSec <= 0 || durationSec > maxImportDurationSec) {
+    const durationSec =
+      kind === "heading"
+        ? 0
+        : (parseDurationCell(getCellValue(sheet, row, 3)) ?? (kind === "break" ? 5 : 15) * 60);
+    if (kind !== "heading" && (durationSec <= 0 || durationSec > maxImportDurationSec)) {
       throw new Error(`Ungültige TOP-Dauer in Zeile ${row}.`);
     }
 
-    const dayLabel = parseDayLabel(getCellValue(sheet, row, 4), topValue);
+    const dayLabel = kind === "topic"
+      ? parseDayLabel(dayCell, topValue)
+      : kind === "heading"
+        ? findFollowingDayLabel(sheet, row) ?? imported[imported.length - 1]?.day ?? "Tag 1"
+        : imported[imported.length - 1]?.day ?? "Tag 1";
 
     imported.push({
       id: `import-${row}-${topValue.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
-      kind: "topic",
+      kind,
       day: dayLabel,
       order: imported.length + 1,
       top: topValue,
@@ -740,12 +770,13 @@ function App() {
   const [editingTitleItemId, setEditingTitleItemId] = useState<string | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState("");
   const [savedSessionCandidate, setSavedSessionCandidate] = useState<PersistedSession | null>(null);
-  const [movingItemId, setMovingItemId] = useState<string | null>(null);
+  const [moveSelection, setMoveSelection] = useState<MoveSelection | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<{ itemId: string; position: DropPosition } | null>(null);
+  const [agendaContextMenu, setAgendaContextMenu] = useState<AgendaContextMenu | null>(null);
 
   const hasRealAgendaItems = useMemo(
-    () => agenda.some((item) => item.kind === "topic" || item.kind === "break"),
+    () => agenda.some(isPlayableAgendaItem),
     [agenda],
   );
 
@@ -757,35 +788,44 @@ function App() {
   const currentItem = currentIndex >= 0 ? agenda[currentIndex] : null;
   const firstFutureIndex = currentIndex < 0 ? 0 : currentIndex + 1;
 
-  const movingItemIndex = useMemo(() => {
-    if (!movingItemId) {
-      return -1;
+  const movingItemIds = useMemo(() => new Set(moveSelection?.itemIds ?? []), [moveSelection]);
+  const movingBlock = useMemo(() => {
+    if (!moveSelection || moveSelection.itemIds.length === 0) {
+      return null;
     }
 
-    return agenda.findIndex((item) => item.id === movingItemId);
-  }, [agenda, movingItemId]);
+    const startIndex = agenda.findIndex((item) => movingItemIds.has(item.id));
+    const endIndex = startIndex + moveSelection.itemIds.length - 1;
+    if (startIndex < firstFutureIndex || endIndex >= agenda.length) {
+      return null;
+    }
 
-  const movingItem = movingItemIndex >= 0 ? agenda[movingItemIndex] : null;
+    for (let index = startIndex; index <= endIndex; index += 1) {
+      const item = agenda[index];
+      if (!movingItemIds.has(item.id) || item.kind === "placeholder" || !movableStates.includes(item.state)) {
+        return null;
+      }
+    }
+
+    return { startIndex, endIndex };
+  }, [agenda, firstFutureIndex, moveSelection, movingItemIds]);
 
   const canMoveSelectedItemUp =
-    movingItem !== null &&
-    movingItem.kind !== "placeholder" &&
-    movableStates.includes(movingItem.state) &&
-    movingItemIndex > firstFutureIndex;
+    movingBlock !== null &&
+    movingBlock.startIndex > firstFutureIndex &&
+    agenda[movingBlock.startIndex - 1]?.kind !== "placeholder" &&
+    movableStates.includes(agenda[movingBlock.startIndex - 1]?.state ?? "done");
 
   const canMoveSelectedItemDown =
-    movingItem !== null &&
-    movingItem.kind !== "placeholder" &&
-    movableStates.includes(movingItem.state) &&
-    movingItemIndex >= firstFutureIndex &&
-    movingItemIndex < agenda.length - 1 &&
-    movableStates.includes(agenda[movingItemIndex + 1]?.state ?? "planned") &&
-    (agenda[movingItemIndex + 1]?.kind ?? "placeholder") !== "placeholder";
+    movingBlock !== null &&
+    movingBlock.endIndex < agenda.length - 1 &&
+    agenda[movingBlock.endIndex + 1]?.kind !== "placeholder" &&
+    movableStates.includes(agenda[movingBlock.endIndex + 1]?.state ?? "done");
 
   const nextItemId = useMemo(() => {
     const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
     const nextPlanned = agenda.find(
-      (item, index) => index >= startIndex && item.kind !== "placeholder" && item.state === "planned",
+      (item, index) => index >= startIndex && isPlayableAgendaItem(item) && item.state === "planned",
     );
     return nextPlanned?.id ?? null;
   }, [agenda, currentIndex]);
@@ -859,7 +899,7 @@ function App() {
 
   const asRunEntries = useMemo<AsRunEntry[]>(() => {
     return agenda
-      .filter((item) => item.actualStartedAtMs !== null)
+      .filter((item) => isPlayableAgendaItem(item) && item.actualStartedAtMs !== null)
       .map((item) => {
         const startedAtMs = item.actualStartedAtMs ?? nowMs;
         const finishedAtMs = item.actualEndedAtMs ?? (item.id === currentItemId ? nowMs : startedAtMs);
@@ -1295,12 +1335,12 @@ function App() {
       ? agenda.findIndex((item) => item.id === currentItemId)
       : -1;
     const nextIndex = agenda.findIndex(
-      (item, index) => index > currentIndexInAgenda && item.kind !== "placeholder" && item.state === "planned",
+      (item, index) => index > currentIndexInAgenda && isPlayableAgendaItem(item) && item.state === "planned",
     );
 
     const nextItemId = nextIndex >= 0 ? agenda[nextIndex].id : null;
 
-    const updated = agenda.map((item) => {
+    const updated = agenda.map((item, index) => {
       if (item.id === currentItemId && item.state === "live") {
         return {
           ...item,
@@ -1316,6 +1356,15 @@ function App() {
           actualStartedAtMs: item.actualStartedAtMs ?? timestamp,
           actualEndedAtMs: null,
         };
+      }
+
+      if (
+        item.kind === "heading" &&
+        item.state === "planned" &&
+        index > currentIndexInAgenda &&
+        (nextIndex < 0 || index < nextIndex)
+      ) {
+        return { ...item, state: "done" as const };
       }
 
       return item;
@@ -1341,7 +1390,7 @@ function App() {
 
     let previousDoneIndex = -1;
     for (let index = currentIndexInAgenda - 1; index >= 0; index -= 1) {
-      if (agenda[index].state === "done") {
+      if (isPlayableAgendaItem(agenda[index]) && agenda[index].state === "done") {
         previousDoneIndex = index;
         break;
       }
@@ -1370,6 +1419,10 @@ function App() {
           actualEndedAtMs: null,
           actualPausedMsTotal: 0,
         };
+      }
+
+      if (item.kind === "heading" && item.state === "done" && index > previousDoneIndex && index < currentIndexInAgenda) {
+        return { ...item, state: "planned" as const };
       }
 
       return item;
@@ -1414,13 +1467,18 @@ function App() {
       return;
     }
 
-    const firstPlanned = agenda.find((item) => item.kind !== "placeholder" && item.state === "planned");
+    const firstPlannedIndex = agenda.findIndex((item) => isPlayableAgendaItem(item) && item.state === "planned");
+    const firstPlanned = agenda[firstPlannedIndex];
     if (!firstPlanned) {
       return;
     }
 
     setAgenda((previous) =>
-      previous.map((item) => {
+      previous.map((item, index) => {
+        if (item.kind === "heading" && item.state === "planned" && index < firstPlannedIndex) {
+          return { ...item, state: "done" as const };
+        }
+
         if (item.id !== firstPlanned.id) {
           return item;
         }
@@ -1704,7 +1762,7 @@ function App() {
     setEditingTitleItemId(null);
     setEditingTitleValue("");
     setAsRunFilter("all");
-    setMovingItemId(null);
+    setMoveSelection(null);
     setDraggedItemId(null);
     draggedItemIdRef.current = null;
     dragOverTargetRef.current = null;
@@ -1806,10 +1864,10 @@ function App() {
         setMeetingDate(importedDate);
         setMeetingLocation(importedLocation);
 
-        setImportInfo(`Import erfolgreich (${importedAgenda.length} TOPs).`);
+        setImportInfo(`Import erfolgreich (${importedAgenda.length} Agendaeinträge).`);
       } catch (error) {
         console.error("Agenda import failed", error);
-        setImportInfo("Import fehlgeschlagen. Bitte Datei und Format prüfen (A=TOP, B=Titel, C=Dauer, D=Tag, optional E=Uhrzeit).");
+        setImportInfo("Import fehlgeschlagen. Bitte Datei und Format prüfen (A=TOP, B=Titel, C=Dauer, D=Tag/P/U, optional E=Uhrzeit).");
       } finally {
         event.target.value = "";
       }
@@ -1929,63 +1987,41 @@ function App() {
     }
   }, [asRunEntries, meetingDate, meetingLocation, meetingTitle, nowMs]);
 
-  const moveFutureItem = useCallback(
-    (itemId: string, direction: -1 | 1) => {
-      setAgenda((previous) => {
-        const index = previous.findIndex((item) => item.id === itemId);
-        if (index < 0) {
-          return previous;
-        }
-
-        const targetIndex = index + direction;
-        if (targetIndex < 0 || targetIndex >= previous.length) {
-          return previous;
-        }
-
-        const currentIndexInPrevious = currentItemId
-          ? previous.findIndex((item) => item.id === currentItemId)
-          : -1;
-
-        if (index <= currentIndexInPrevious || targetIndex <= currentIndexInPrevious) {
-          return previous;
-        }
-
-        if (!movableStates.includes(previous[index].state)) {
-          return previous;
-        }
-
-        if (!movableStates.includes(previous[targetIndex].state)) {
-          return previous;
-        }
-
-        const swapped = [...previous];
-        const source = swapped[index];
-        swapped[index] = swapped[targetIndex];
-        swapped[targetIndex] = source;
-        return normalizeOrder(swapped);
-      });
-    },
-    [currentItemId],
-  );
-
   const toggleMoveMode = useCallback(
-    (itemId: string) => {
-      setMovingItemId((previous) => {
-        if (previous === itemId) {
-          return null;
+    (itemId: string, withShift: boolean) => {
+      const targetIndex = agenda.findIndex((item) => item.id === itemId);
+      const targetItem = agenda[targetIndex];
+      if (
+        targetIndex < firstFutureIndex ||
+        !targetItem ||
+        targetItem.kind === "placeholder" ||
+        !movableStates.includes(targetItem.state)
+      ) {
+        return;
+      }
+
+      setMoveSelection((previous) => {
+        if (!withShift || !previous) {
+          if (!withShift && previous?.itemIds.length === 1 && previous.itemIds[0] === itemId) {
+            return null;
+          }
+
+          return { anchorId: itemId, itemIds: [itemId] };
         }
 
-        const index = agenda.findIndex((item) => item.id === itemId);
-        if (index < firstFutureIndex) {
+        const anchorIndex = agenda.findIndex((item) => item.id === previous.anchorId);
+        const startIndex = Math.min(anchorIndex, targetIndex);
+        const endIndex = Math.max(anchorIndex, targetIndex);
+        if (startIndex < firstFutureIndex) {
           return previous;
         }
 
-        const candidate = agenda[index];
-        if (!candidate || candidate.kind === "placeholder" || !movableStates.includes(candidate.state)) {
+        const items = agenda.slice(startIndex, endIndex + 1);
+        if (items.some((item) => item.kind === "placeholder" || !movableStates.includes(item.state))) {
           return previous;
         }
 
-        return itemId;
+        return { anchorId: previous.anchorId, itemIds: items.map((item) => item.id) };
       });
     },
     [agenda, firstFutureIndex],
@@ -1993,13 +2029,45 @@ function App() {
 
   const moveSelectedItem = useCallback(
     (direction: -1 | 1) => {
-      if (!movingItemId) {
+      if (!moveSelection || !movingBlock) {
         return;
       }
 
-      moveFutureItem(movingItemId, direction);
+      setAgenda((previous) => {
+        const selectedIds = new Set(moveSelection.itemIds);
+        const startIndex = previous.findIndex((item) => selectedIds.has(item.id));
+        const endIndex = startIndex + selectedIds.size - 1;
+        const currentIndexInPrevious = currentItemId
+          ? previous.findIndex((item) => item.id === currentItemId)
+          : -1;
+        const targetIndex = direction < 0 ? startIndex - 1 : endIndex + 1;
+        const targetItem = previous[targetIndex];
+
+        if (
+          startIndex <= currentIndexInPrevious ||
+          endIndex >= previous.length ||
+          targetIndex <= currentIndexInPrevious ||
+          !targetItem ||
+          targetItem.kind === "placeholder" ||
+          !movableStates.includes(targetItem.state)
+        ) {
+          return previous;
+        }
+
+        for (let index = startIndex; index <= endIndex; index += 1) {
+          const item = previous[index];
+          if (!selectedIds.has(item.id) || item.kind === "placeholder" || !movableStates.includes(item.state)) {
+            return previous;
+          }
+        }
+
+        const reordered = [...previous];
+        const [neighbor] = reordered.splice(targetIndex, 1);
+        reordered.splice(direction < 0 ? endIndex : startIndex, 0, neighbor);
+        return normalizeOrder(reordered);
+      });
     },
-    [moveFutureItem, movingItemId],
+    [currentItemId, moveSelection, movingBlock],
   );
 
   const moveFutureItemByDragDrop = useCallback(
@@ -2142,25 +2210,50 @@ function App() {
   );
 
   useEffect(() => {
-    if (!movingItemId) {
+    if (!moveSelection || movingBlock) {
       return;
     }
 
-    const selectedIndex = agenda.findIndex((item) => item.id === movingItemId);
-    if (selectedIndex < firstFutureIndex) {
-      setMovingItemId(null);
-      return;
-    }
-
-    const selectedItem = agenda[selectedIndex];
-    if (!selectedItem || selectedItem.kind === "placeholder" || !movableStates.includes(selectedItem.state)) {
-      setMovingItemId(null);
-    }
-  }, [agenda, firstFutureIndex, movingItemId]);
+    setMoveSelection(null);
+  }, [moveSelection, movingBlock]);
 
   useEffect(() => {
     dragOverTargetRef.current = dragOverTarget;
   }, [dragOverTarget]);
+
+  useEffect(() => {
+    setAgendaContextMenu(null);
+  }, [agenda]);
+
+  useEffect(() => {
+    if (!agendaContextMenu) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest(".agendaContextMenu")) {
+        setAgendaContextMenu(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAgendaContextMenu(null);
+      }
+    };
+    const closeMenu = () => setAgendaContextMenu(null);
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("resize", closeMenu);
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("resize", closeMenu);
+    };
+  }, [agendaContextMenu]);
 
   useEffect(() => {
     if (!draggedItemId || !mouseDragActiveRef.current) {
@@ -2215,6 +2308,31 @@ function App() {
       window.removeEventListener("mouseup", handleMouseUp);
     };
   }, [draggedItemId, moveFutureItemByDragDrop, resolveDropTargetFromPointer]);
+
+  const deleteFutureItem = useCallback((itemId: string) => {
+    setAgendaContextMenu(null);
+    setAgenda((previous) => {
+      const itemIndex = previous.findIndex((item) => item.id === itemId);
+      const currentIndexInPrevious = currentItemId
+        ? previous.findIndex((item) => item.id === currentItemId)
+        : -1;
+      const item = previous[itemIndex];
+
+      if (
+        !item ||
+        itemIndex <= currentIndexInPrevious ||
+        item.kind === "placeholder" ||
+        !movableStates.includes(item.state)
+      ) {
+        return previous;
+      }
+
+      return normalizeOrder(previous.filter((candidate) => candidate.id !== itemId));
+    });
+    setMoveSelection((previous) => previous?.itemIds.includes(itemId) ? null : previous);
+    setEditingDurationItemId((previous) => previous === itemId ? null : previous);
+    setEditingTitleItemId((previous) => previous === itemId ? null : previous);
+  }, [currentItemId]);
 
   const toggleHold = useCallback(
     (index: number) => {
@@ -2462,6 +2580,7 @@ function App() {
       if (
         isExternalView ||
         event.code !== "Space" ||
+        agendaContextMenu !== null ||
         isSettingsOpen ||
         isStopConfirmOpen ||
         isHelpOpen ||
@@ -2487,7 +2606,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [advanceToNextItem, isExternalView, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
+  }, [advanceToNextItem, agendaContextMenu, isExternalView, isHelpOpen, isSettingsOpen, isStopConfirmOpen, rewindToPreviousItem, savedSessionCandidate]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -2760,8 +2879,8 @@ function App() {
                   className="iconButton moveControlButton"
                   onClick={() => moveSelectedItem(-1)}
                   disabled={!canMoveSelectedItemUp}
-                  aria-label="Ausgewählte Zeile nach oben bewegen"
-                  title="Ausgewählte Zeile nach oben bewegen"
+                  aria-label="Ausgewählte Zeilen nach oben bewegen"
+                  title="Ausgewählte Zeilen nach oben bewegen"
                 >
                   ↑
                 </button>
@@ -2770,8 +2889,8 @@ function App() {
                   className="iconButton moveControlButton"
                   onClick={() => moveSelectedItem(1)}
                   disabled={!canMoveSelectedItemDown}
-                  aria-label="Ausgewählte Zeile nach unten bewegen"
-                  title="Ausgewählte Zeile nach unten bewegen"
+                  aria-label="Ausgewählte Zeilen nach unten bewegen"
+                  title="Ausgewählte Zeilen nach unten bewegen"
                 >
                   ↓
                 </button>
@@ -2852,11 +2971,11 @@ function App() {
         />
       ) : null}
 
-      <section ref={agendaScrollAreaRef} className="agendaScrollArea">
+      <section ref={agendaScrollAreaRef} className="agendaScrollArea" onContextMenu={(event) => event.preventDefault()}>
         <article className="agendaCard">
           <h2>Agenda</h2>
           {!isAudienceView ? (
-            <p className="hint">Zukünftige Punkte lassen sich per Drag & Drop oder im Bewegen-Modus (↕ + ↑/↓) umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
+            <p className="hint">Zukünftige Punkte lassen sich per Drag & Drop oder im Bewegen-Modus (↕ + ↑/↓, Umschalt+Klick für Blöcke) umsortieren, auf Halt setzen und per Doppelklick Text/Zeit anpassen.</p>
           ) : null}
           <ul className={draggedItemId ? "agendaList draggingActive" : "agendaList"}>
             {agenda.map((item, index) => {
@@ -2864,8 +2983,9 @@ function App() {
               const isNext = item.id === nextItemId;
               const isFinished = item.state === "done" || item.state === "skipped";
               const isBreakItem = item.kind === "break";
+              const isHeadingItem = item.kind === "heading";
               const isPlaceholderItem = item.kind === "placeholder";
-              const isEditableDuration = !isAudienceView && !isPlaceholderItem && (item.state === "planned" || item.state === "hold");
+              const isEditableDuration = !isAudienceView && !isPlaceholderItem && !isHeadingItem && (item.state === "planned" || item.state === "hold");
               const isEditableTitle = !isAudienceView && !isPlaceholderItem && (item.state === "planned" || item.state === "hold");
               const isEditingDuration = editingDurationItemId === item.id;
               const isEditingTitle = editingTitleItemId === item.id;
@@ -2881,7 +3001,7 @@ function App() {
                 !isPlaceholderItem &&
                 isFuture &&
                 movableStates.includes(item.state);
-              const isInMoveMode = movingItemId === item.id;
+              const isInMoveMode = movingItemIds.has(item.id);
               const canToggleHold =
                 !isAudienceView && !isPlaceholderItem && isFuture && (item.state === "planned" || item.state === "hold");
               const canDragItem =
@@ -2889,11 +3009,13 @@ function App() {
                 !isPlaceholderItem &&
                 isFuture &&
                 movableStates.includes(item.state);
+              const canDeleteItem = canDragItem;
               const dropIndicator = dragOverTarget?.itemId === item.id ? dragOverTarget.position : null;
               const scheduledStartLabel = scheduleTiming.startTimeByItemId.get(item.id) ?? "--:--:--";
               const agendaItemClassName = [
                 "agendaItem",
                 isBreakItem ? "pauseItem" : "",
+                isHeadingItem ? "headingItem" : "",
                 isPlaceholderItem ? "placeholderItem" : "",
                 isCurrent ? "current" : "",
                 isNext ? "next" : "",
@@ -2933,6 +3055,19 @@ function App() {
                   className={agendaItemClassName}
                   data-item-id={item.id}
                   onMouseDown={canDragItem ? (event) => beginMouseDrag(event, item.id, canDragItem) : undefined}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    if (!canDeleteItem) {
+                      setAgendaContextMenu(null);
+                      return;
+                    }
+
+                    setAgendaContextMenu({
+                      itemId: item.id,
+                      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 208)),
+                      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 64)),
+                    });
+                  }}
                   title={canDragItem ? "Zum Verschieben ziehen und zwischen den Zeilen loslassen" : undefined}
                   aria-grabbed={draggedItemId === item.id}
                 >
@@ -2950,6 +3085,12 @@ function App() {
                         <span className="scheduleTime">{scheduledStartLabel}</span>
                         {titleElement}
                       </>
+                    ) : isHeadingItem ? (
+                      <>
+                        <span className="badge headingBadge">Überschrift</span>
+                        {item.top.trim() ? <span className="headingNumber">{item.top}</span> : null}
+                        {titleElement}
+                      </>
                     ) : (
                       <>
                         <span className={`badge state-${item.state}`}>{stateLabel(item.state)}</span>
@@ -2960,9 +3101,9 @@ function App() {
                       </>
                     )}
                   </div>
-                  {!isPlaceholderItem ? (
+                  {!isPlaceholderItem && (!isAudienceView || !isHeadingItem) ? (
                     <div className={isAudienceView ? "agendaActions audienceAgendaActions" : "agendaActions"}>
-                      {isEditingDuration ? (
+                      {isHeadingItem ? null : isEditingDuration ? (
                         <input
                           className="durationInput"
                           value={editingDurationValue}
@@ -2986,10 +3127,11 @@ function App() {
                           <button
                             type="button"
                             className={isInMoveMode ? "mini moveModeToggle active" : "mini moveModeToggle"}
-                            onClick={() => toggleMoveMode(item.id)}
+                            onClick={(event) => toggleMoveMode(item.id, event.shiftKey)}
                             disabled={!canSetMoveMode}
-                            aria-label={isInMoveMode ? "Bewegen-Modus beenden" : "Zeile für Bewegen-Modus auswählen"}
-                            title={isInMoveMode ? "Bewegen-Modus beenden" : "Zeile für Bewegen-Modus auswählen"}
+                            aria-pressed={isInMoveMode}
+                            aria-label={isInMoveMode && moveSelection?.itemIds.length === 1 ? "Bewegen-Modus beenden" : "Zeile für Bewegen-Modus auswählen"}
+                            title="Klick: einzelne Zeile auswählen · Umschalt+Klick: Block auswählen"
                           >
                             ↕
                           </button>
@@ -3082,6 +3224,19 @@ function App() {
           )}
         </article> : null}
       </section>
+
+      {agendaContextMenu ? (
+        <div
+          className="agendaContextMenu"
+          role="menu"
+          aria-label="Aktionen für Agenda-Position"
+          style={{ left: agendaContextMenu.x, top: agendaContextMenu.y }}
+        >
+          <button type="button" role="menuitem" onClick={() => deleteFutureItem(agendaContextMenu.itemId)} autoFocus>
+            Position löschen
+          </button>
+        </div>
+      ) : null}
 
       {isSettingsOpen ? (
         <div className="settingsOverlay" onClick={closeSettings}>
@@ -3190,7 +3345,9 @@ function App() {
             </p>
 
             <img src={helpOverviewImage} alt="Übersicht der Sitzungsbuddy Oberfläche" className="helpImage" />
-            <p className="helpCaption">Aktueller Screenshot der Oberfläche (Version {appVersion}).</p>
+            <p className="helpCaption">
+              Beispielansicht der Oberfläche; einzelne Bedienelemente können inzwischen anders aussehen.
+            </p>
 
             <h4 className="helpSectionTitle">1) Kopfbereich</h4>
             <p className="helpText">
@@ -3224,33 +3381,76 @@ function App() {
             <h4 className="helpSectionTitle">4) Agenda-Liste</h4>
             <p className="helpText">
               Der aktuelle TOP ist gelb/grün markiert, der nächste TOP orange. Bereits gesendete Einträge werden ausgegraut.
-              Zukünftige Einträge lassen sich mit den Pfeilen umsortieren und über <strong>Halt</strong> temporär sperren.
-              Pausenzeilen sind leuchtend gelb dargestellt und verhalten sich wie normale Agendaeinträge. Ohne Import zeigt die
-              Liste standardmäßig Hinweise zum Agenda-Import.
+              Zukünftige Einträge lassen sich umsortieren und über <strong>Halt</strong> temporär sperren.
+              Per Rechtsklick kannst du eine noch nicht gesendete Position löschen; gesendete Positionen bleiben erhalten.
+              Pausenzeilen sind leuchtend gelb dargestellt und verhalten sich wie normale Agendaeinträge. Hellblaue
+              Überschriften gliedern die Agenda, haben aber weder eine eigene Laufzeit noch eine Startuhrzeit. Ohne Import
+              zeigt die Liste standardmäßig Hinweise zum Agenda-Import.
             </p>
 
-            <h4 className="helpSectionTitle">5) Text- und Zeitbearbeitung</h4>
+            <h4 className="helpSectionTitle">5) Zeilen bewegen</h4>
+            <p className="helpText">
+              <strong>Eine Zeile:</strong> Klicke rechts in einer noch nicht gesendeten Zeile auf <strong>↕</strong>.
+              Die Zeile wird sichtbar markiert und ist im Bewegen-Modus. Mit den großen <strong>↑</strong>- und
+              <strong> ↓</strong>-Knöpfen oben im Kopfbereich verschiebst du sie pro Klick um eine Position. Du kannst
+              denselben Pfeil mehrfach anklicken, ohne die Zeile erneut auszuwählen. Ein weiterer Klick auf ihren
+              <strong> ↕</strong>-Knopf beendet die Auswahl; ein Klick auf den ↕-Knopf einer anderen Zeile wechselt die
+              Auswahl dorthin.
+            </p>
+            <p className="helpText">
+              <strong>Mehrere Zeilen:</strong> Wähle zuerst mit ↕ eine Zeile aus. Halte dann <strong>Shift</strong>
+              (Umschalttaste) gedrückt und klicke auf ↕ in einer weiteren Zeile. Alle Zeilen dazwischen werden als
+              zusammenhängender Block markiert. Die Pfeile oben bewegen den gesamten Block gemeinsam; seine interne
+              Reihenfolge bleibt erhalten. Mit einem normalen Klick auf ↕ wechselst du wieder zur Einzelauswahl.
+              Bewegen lassen sich nur zukünftige, geplante oder auf Halt gesetzte Zeilen – nicht der laufende TOP und nicht
+              bereits gesendete Zeilen.
+            </p>
+            <p className="helpText">
+              Alternativ kannst du eine einzelne zukünftige Zeile mit der Maus ziehen und zwischen anderen zukünftigen
+              Zeilen fallen lassen. Während des Ziehens zeigt eine Einfügemarkierung die Zielposition an.
+            </p>
+
+            <h4 className="helpSectionTitle">6) Text- und Zeitbearbeitung</h4>
             <p className="helpText">
               Bei zukünftigen bzw. gehaltenen Punkten kannst du mit Doppelklick den <strong>Titeltext</strong> und die
               <strong> geplante Dauer</strong> direkt in der Liste bearbeiten (Enter = übernehmen, Esc = abbrechen). Das gilt
-              auch für eingefügte Pausen- und Blanko-Zeilen.
+              auch für eingefügte Pausen- und Blanko-Zeilen. Bei Überschriften ist nur der Text editierbar.
             </p>
 
-            <h4 className="helpSectionTitle">6) Triggern per Tastatur</h4>
+            <h4 className="helpSectionTitle">7) Triggern per Tastatur</h4>
             <p className="helpText">
               <strong>Leertaste</strong> triggert vorwärts zum nächsten TOP. <strong>Strg + Leertaste</strong> nimmt das letzte
-              Triggern zurück und holt den vorherigen TOP wieder auf Sendung. <strong>Esc</strong> schließt geöffnete Dialoge.
+              Triggern zurück und holt den vorherigen TOP oder die vorherige Pause wieder auf Sendung.
+              Dazwischenliegende Überschriften werden in beide Richtungen automatisch übersprungen. <strong>Esc</strong>
+              schließt geöffnete Dialoge.
             </p>
 
-            <h4 className="helpSectionTitle">7) Excel-Import</h4>
+            <h4 className="helpSectionTitle">8) Excel-Import</h4>
             <p className="helpText">
               Beim Import werden folgende Felder gelesen: <strong>A1</strong> Haupttitel, <strong>A4</strong> Untertitel,
-              <strong> B2</strong> Ort, <strong>C2</strong> Datum/Zeit. TOP-Daten beginnen ab Zeile 6:
-              <strong> A</strong> = TOP-Nummer, <strong>B</strong> = Titel, <strong>C</strong> = geplante Minuten,
-              <strong> D</strong> = Sitzungstag.
+              <strong> B2</strong> Ort und <strong>B3</strong> Datum. Die Agenda beginnt unter der Spaltenüberschrift,
+              normalerweise ab Zeile 6: <strong>A</strong> = TOP- oder Abschnittsnummer, <strong>B</strong> = Titel,
+              <strong> C</strong> = geplante Dauer in Minuten und <strong>D</strong> = Sitzungstag oder Eigenschaft.
+              Eine Zahl in D, etwa <strong>1</strong> oder <strong>2</strong>, ordnet einen TOP dem jeweiligen Sitzungstag zu.
+              Die Kennbuchstaben P und U können auch kleingeschrieben werden. Die tatsächliche Startzeit der Sitzung beginnt
+              erst mit <strong>OnAir</strong>.
+            </p>
+            <p className="helpText">
+              <strong>P = Pause:</strong> Steht in D ein P, wird die Zeile als leuchtend gelbe Pause importiert – genauso wie
+              bei „Pause einfügen“. Der Text in B ist frei wählbar; bleibt B leer, heißt der Eintrag „Pause“. In C steht die
+              geplante Länge in Minuten; ohne Angabe gelten fünf Minuten. Eine TOP-Nummer in A ist nicht nötig. Die Pause
+              zählt bei der Berechnung des Sitzungsendes mit, kann wie ein normaler Eintrag getriggert werden und erscheint
+              in der Beameransicht als Uhrzeit der nächsten geplanten Pause.
+            </p>
+            <p className="helpText">
+              <strong>U = Überschrift:</strong> Steht in D ein U, wird die Zeile als hellblaue Abschnittsüberschrift
+              importiert. Der Titel steht in B; eine optionale Abschnittsnummer aus A wird ohne „TOP“ davor angezeigt.
+              Spalte C spielt hier keine Rolle: Die Überschrift hat weder Dauer noch eigene Startuhrzeit und erscheint nicht im
+              AsRun-Log. Beim Start mit OnAir oder beim Triggern mit der Leertaste springt die App direkt zum nächsten TOP
+              oder zur nächsten Pause. Auch beim Zurücktriggern wird die Überschrift übersprungen.
             </p>
 
-            <h4 className="helpSectionTitle">8) AsRun-Export</h4>
+            <h4 className="helpSectionTitle">9) AsRun-Export</h4>
             <p className="helpText">
               Das PDF enthält alle bereits gesendeten Einträge inklusive Startzeit, geplanter Dauer und Ist-Dauer. Über die
               Filter oberhalb der Vorschau kannst du zwischen "nur fertige" und "inkl. laufendem" Eintrag wechseln. In der
@@ -3258,7 +3458,7 @@ function App() {
               und tatsächlicher Dauer.
             </p>
 
-            <h4 className="helpSectionTitle">9) Sitzung speichern und fortführen</h4>
+            <h4 className="helpSectionTitle">10) Sitzung speichern und fortführen</h4>
             <p className="helpText">
               Wenn du bei <strong>Stop</strong> "Ja + Speichern" wählst, wird der aktuelle Stand lokal gesichert. Beim nächsten
               Start fragt die App automatisch, ob der letzte Stand fortgeführt werden soll.
