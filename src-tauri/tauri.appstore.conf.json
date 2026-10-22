@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "category": "Utility",
+    "macOS": {
+      "bundleVersion": "1.1.2",
+      "entitlements": "./Entitlements.appstore.plist",
+      "files": {
+        "embedded.provisionprofile": "./embedded.provisionprofile"
+      }
+    }
+  }
+}

@@ -5,6 +5,12 @@
   "windows": ["main", "audience-view"],
   "permissions": [
     "core:default",
+    "core:window:allow-close",
+    "core:window:allow-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-set-position",
+    "core:window:allow-unmaximize",
     "core:webview:allow-create-webview-window",
     "dialog:default"
   ]

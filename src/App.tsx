@@ -694,6 +694,7 @@ function ensurePdfExtension(path: string): string {
 function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const agendaScrollAreaRef = useRef<HTMLElement | null>(null);
+  const audienceWindowOpenedRef = useRef(false);
   const draggedItemIdRef = useRef<string | null>(null);
   const dragOverTargetRef = useRef<{ itemId: string; position: DropPosition } | null>(null);
   const mouseDragActiveRef = useRef(false);
@@ -1078,11 +1079,21 @@ function App() {
       try {
         const monitors = await availableMonitors();
         if (!active || monitors.length < 2) {
+          audienceWindowOpenedRef.current = false;
           return;
         }
 
         const existingWindow = await WebviewWindow.getByLabel(audienceWindowLabel);
-        if (!active || existingWindow) {
+        if (!active) {
+          return;
+        }
+
+        if (existingWindow) {
+          audienceWindowOpenedRef.current = true;
+          return;
+        }
+
+        if (audienceWindowOpenedRef.current) {
           return;
         }
 
@@ -1115,10 +1126,23 @@ function App() {
         });
 
         beamerWindow.once("tauri://created", async () => {
+          audienceWindowOpenedRef.current = true;
+
+          if (isWindowsPlatform) {
+            await beamerWindow.setPosition(externalMonitor.position).catch((error) => {
+              console.warn("Beamer-Fenster konnte nicht auf dem externen Monitor positioniert werden.", error);
+            });
+          }
+
           try {
             await beamerWindow.setFullscreen(true);
-          } catch {
-            // ignore fullscreen errors
+          } catch (error) {
+            console.warn("Beamer-Vollbild konnte nicht aktiviert werden.", error);
+            if (isWindowsPlatform) {
+              await beamerWindow.maximize().catch((maximizeError) => {
+                console.warn("Beamer-Fenster konnte nicht maximiert werden.", maximizeError);
+              });
+            }
           }
         });
       } catch (error) {
@@ -1135,7 +1159,7 @@ function App() {
       active = false;
       window.clearInterval(monitorPolling);
     };
-  }, [isExternalView, isTauriRuntime]);
+  }, [isExternalView, isTauriRuntime, isWindowsPlatform]);
 
   const clearSavedSession = useCallback(() => {
     try {
@@ -1585,24 +1609,50 @@ function App() {
   }, [settingsDateDraft, settingsLocationDraft, settingsTitleDraft]);
 
   const minimizeWindow = useCallback(() => {
-    if (!isTauriRuntime || isExternalView) {
+    if (!isTauriRuntime) {
       return;
     }
 
-    void getCurrentWindow().minimize().catch((error) => {
+    const currentWindow = getCurrentWindow();
+    void (async () => {
+      if (await currentWindow.isFullscreen()) {
+        await currentWindow.setFullscreen(false);
+      }
+      await currentWindow.minimize();
+    })().catch((error) => {
       console.warn("Fenster konnte nicht minimiert werden.", error);
     });
-  }, [isExternalView, isTauriRuntime]);
+  }, [isTauriRuntime]);
+
+  const toggleMaximizeWindow = useCallback(() => {
+    if (!isTauriRuntime) {
+      return;
+    }
+
+    const currentWindow = getCurrentWindow();
+    void (async () => {
+      if (await currentWindow.isFullscreen()) {
+        await currentWindow.setFullscreen(false);
+        await currentWindow.maximize();
+      } else if (await currentWindow.isMaximized()) {
+        await currentWindow.unmaximize();
+      } else {
+        await currentWindow.maximize();
+      }
+    })().catch((error) => {
+      console.warn("Fenster konnte nicht maximiert oder wiederhergestellt werden.", error);
+    });
+  }, [isTauriRuntime]);
 
   const closeWindow = useCallback(() => {
-    if (!isTauriRuntime || isExternalView) {
+    if (!isTauriRuntime) {
       return;
     }
 
     void getCurrentWindow().close().catch((error) => {
       console.warn("Fenster konnte nicht geschlossen werden.", error);
     });
-  }, [isExternalView, isTauriRuntime]);
+  }, [isTauriRuntime]);
 
   const hasSessionRuntimeData = useMemo(() => {
     if (onAir || isPaused || sessionStartedAt !== null || currentItemId !== null) {
@@ -2622,7 +2672,7 @@ function App() {
             ) : null}
           </div>
 
-          {isWindowsPlatform && !isExternalView ? (
+          {isWindowsPlatform ? (
             <div className="windowControls" role="group" aria-label="Fenstersteuerung">
               <button
                 type="button"
@@ -2635,10 +2685,19 @@ function App() {
               </button>
               <button
                 type="button"
+                className="windowControlButton"
+                onClick={toggleMaximizeWindow}
+                aria-label="Fenster maximieren oder wiederherstellen"
+                title="Maximieren / Wiederherstellen"
+              >
+                □
+              </button>
+              <button
+                type="button"
                 className="windowControlButton close"
                 onClick={closeWindow}
-                aria-label="Anwendung schließen"
-                title="Schließen"
+                aria-label={isAudienceView ? "Beameransicht schließen" : "Anwendung schließen"}
+                title={isAudienceView ? "Beameransicht schließen" : "Schließen"}
               >
                 ✕
               </button>
