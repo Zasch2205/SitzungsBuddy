@@ -1,10 +1,15 @@
 use base64::{engine::general_purpose, Engine as _};
-use std::{fs, path::Path, sync::{LazyLock, Mutex}};
+use std::{
+    fs,
+    path::Path,
+    sync::{LazyLock, Mutex},
+};
 use tauri::{Manager, RunEvent, WindowEvent};
 
 #[cfg(target_os = "macos")]
 use std::process::{Child, Command};
 
+// Der Kindprozess muss während OnAir gehalten werden; sein Ende gibt die Schlafsperre wieder frei.
 #[cfg(target_os = "macos")]
 static CAFFEINATE_PROCESS: LazyLock<Mutex<Option<Child>>> = LazyLock::new(|| Mutex::new(None));
 
@@ -25,7 +30,7 @@ fn enable_sleep_blocker() -> Result<(), String> {
             .map_err(|_| "Sleep-Blocker konnte nicht gestartet werden.".to_string())?;
 
         *process_guard = Some(child);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -42,7 +47,7 @@ fn enable_sleep_blocker() -> Result<(), String> {
             return Err("Sleep-Blocker konnte nicht aktiviert werden.".to_string());
         }
 
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -94,7 +99,8 @@ fn save_pdf_file(path: String, base64_data: String) -> Result<(), String> {
         .decode(base64_data)
         .map_err(|_| "PDF-Daten konnten nicht verarbeitet werden.".to_string())?;
 
-    fs::write(target_path, pdf_bytes).map_err(|_| "PDF konnte nicht gespeichert werden.".to_string())
+    fs::write(target_path, pdf_bytes)
+        .map_err(|_| "PDF konnte nicht gespeichert werden.".to_string())
 }
 
 #[tauri::command]
@@ -114,7 +120,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 disable_sleep_blocker();
-                close_beamer_windows(&window.app_handle());
+                close_beamer_windows(window.app_handle());
             }
         })
         .invoke_handler(tauri::generate_handler![save_pdf_file, set_on_air_mode])

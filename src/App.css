@@ -171,12 +171,6 @@ p {
   background: #e20f27;
 }
 
-.miniSessionButtons {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
 .miniSessionButton {
   width: 3.1rem;
   height: 3.1rem;

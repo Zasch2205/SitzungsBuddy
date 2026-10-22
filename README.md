@@ -2,14 +2,14 @@
 
 Desktop-App zur Live-Begleitung komplexer, mehrtägiger Sitzungen auf macOS und Windows.
 
-## MVP-Fokus
+## Funktionen
 
-- Excel-Agenda importieren
-- OnAir-Start für die Live-Sitzung
-- Gesamtzeit + Countdown des aktuellen TOP
-- `Space` für den nächsten Tagesordnungspunkt
-- Zukünftige Punkte umsortieren oder auf Halt setzen
-- Beamer-Ansicht (im Scaffold als Preview-Stub)
+- Excel-Agenda mit TOPs, Pausen (`P`) und Überschriften (`U`) importieren
+- Sitzung live steuern: OnAir mit Beenden-Dialog, Pause, Vorwärts- und Rückwärts-Triggern
+- Plan-/Ist-Zeiten und voraussichtliches Sitzungsende anzeigen
+- Zukünftige Zeilen verschieben, als Block auswählen, auf Halt setzen oder bearbeiten
+- Reduzierte Beameransicht auf einem externen Monitor anzeigen
+- Sitzungsstand lokal sichern und ein AsRun-Log als PDF exportieren
 
 ## Tech-Stack
 
@@ -37,6 +37,15 @@ npm run tauri dev
 ```
 
 Hinweis: `tauri dev` räumt Port `1420` automatisch frei.
+
+## Aufbau
+
+- `src/App.tsx`: Oberfläche und Sitzungssteuerung
+- `src/lib/agenda.ts`: Agenda-Datenmodell und Planungshelfer
+- `src/lib/excelImport.ts`: Excel-Import und Validierung
+- `src-tauri/src/lib.rs`: native Tauri-Funktionen
+
+Die Zustandsregeln und weitere Refactoring-Schritte stehen in `docs/ARCHITECTURE_DECISIONS.md`.
 
 ## Projekt-Dokumentation
 

@@ -13,28 +13,21 @@ import { availableMonitors, getCurrentWindow, primaryMonitor } from "@tauri-apps
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { save } from "@tauri-apps/plugin-dialog";
 import { jsPDF } from "jspdf";
-import readXlsxFile, { type Sheet as ImportedSheet } from "read-excel-file/browser";
+import readXlsxFile from "read-excel-file/browser";
 import helpOverviewImage from "./assets/help-overview.png";
 import logoOriginal from "./assets/sitzungsbuddy-logo-original.png";
+import {
+  hasSameAgendaBlueprint,
+  isPlayableAgendaItem,
+  normalizeOrder,
+  sanitizeImportedText,
+  type AgendaItem,
+  type AgendaKind,
+  type AgendaState,
+} from "./lib/agenda";
 import { fnv1aHash } from "./lib/checksum";
+import { buildImportedAgenda, readCellText, readLabeledValue } from "./lib/excelImport";
 import "./App.css";
-
-type AgendaState = "planned" | "live" | "hold" | "done" | "skipped";
-type AgendaKind = "topic" | "break" | "heading" | "placeholder";
-
-type AgendaItem = {
-  id: string;
-  kind: AgendaKind;
-  day: string;
-  order: number;
-  top: string;
-  title: string;
-  plannedDurationSec: number;
-  state: AgendaState;
-  actualStartedAtMs: number | null;
-  actualEndedAtMs: number | null;
-  actualPausedMsTotal: number;
-};
 
 type AsRunEntry = {
   id: string;
@@ -49,14 +42,9 @@ type AsRunEntry = {
 };
 
 type AsRunFilter = "completed" | "all";
-type ImportedSheetData = ImportedSheet["data"];
 type DropPosition = "before" | "after";
 type AgendaContextMenu = { itemId: string; x: number; y: number };
 type MoveSelection = { anchorId: string; itemIds: string[] };
-
-function isPlayableAgendaItem(item: AgendaItem): boolean {
-  return item.kind === "topic" || item.kind === "break";
-}
 
 const audienceViewQueryParam = "view";
 const audienceViewQueryValue = "audience";
@@ -98,9 +86,6 @@ const defaultMeetingLocation = "";
 const maxImportFileSizeBytes = 5 * 1024 * 1024;
 const maxImportSheetCount = 5;
 const maxImportCellCount = 20_000;
-const maxImportDurationSec = 12 * 60 * 60;
-const maxAgendaTopLength = 32;
-const maxAgendaTitleLength = 180;
 const savedSessionStorageKey = "sitzungsbuddy.saved-session.v1";
 const savedSessionSchemaVersion = 1;
 
@@ -252,6 +237,7 @@ function normalizePersistedSession(rawRecord: Record<string, unknown>): Persiste
 }
 
 function buildPersistedSessionEnvelope(payload: PersistedSession): PersistedSessionEnvelope {
+  // Die Prüfsumme erkennt beschädigte lokale Snapshots; sie ist keine kryptografische Signatur.
   const payloadJson = JSON.stringify(payload);
 
   return {
@@ -292,31 +278,6 @@ function parseSavedSession(rawValue: string | null): PersistedSession | null {
   } catch {
     return null;
   }
-}
-
-function normalizeOrder(items: AgendaItem[]): AgendaItem[] {
-  return items.map((item, index) => ({ ...item, order: index + 1 }));
-}
-
-function hasSameAgendaBlueprint(left: AgendaItem[], right: AgendaItem[]): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-
-  return left.every((item, index) => {
-    const candidate = right[index];
-    if (!candidate) {
-      return false;
-    }
-
-    return (
-      item.kind === candidate.kind &&
-      item.day === candidate.day &&
-      item.top === candidate.top &&
-      item.title === candidate.title &&
-      item.plannedDurationSec === candidate.plannedDurationSec
-    );
-  });
 }
 
 function formatClock(seconds: number): string {
@@ -371,14 +332,6 @@ function formatAgendaItemLabel(item: AgendaItem, style: "list" | "header" = "lis
   return topText || titleText || "Ohne Titel";
 }
 
-function sanitizeImportedText(rawValue: string, maxLength = 240): string {
-  return rawValue
-    .replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxLength);
-}
-
 function stateLabel(state: AgendaState): string {
   switch (state) {
     case "planned":
@@ -396,108 +349,6 @@ function stateLabel(state: AgendaState): string {
   }
 }
 
-function decodeCellAddress(address: string): { row: number; column: number } | null {
-  const match = address.trim().match(/^([A-Za-z]+)(\d+)$/);
-  if (!match) {
-    return null;
-  }
-
-  const columnLabel = match[1].toUpperCase();
-  const row = Number(match[2]);
-  if (!Number.isInteger(row) || row <= 0) {
-    return null;
-  }
-
-  let column = 0;
-  for (const character of columnLabel) {
-    const code = character.charCodeAt(0) - 64;
-    if (code < 1 || code > 26) {
-      return null;
-    }
-
-    column = column * 26 + code;
-  }
-
-  return { row, column };
-}
-
-function getCellValue(sheet: ImportedSheetData, row: number, column: number): unknown {
-  const rowData = sheet[row - 1];
-  if (!rowData || column <= 0 || column > rowData.length) {
-    return undefined;
-  }
-
-  return rowData[column - 1];
-}
-
-function readCellText(sheet: ImportedSheetData, address: string): string {
-  const decodedAddress = decodeCellAddress(address);
-  if (!decodedAddress) {
-    return "";
-  }
-
-  const cellValue = getCellValue(sheet, decodedAddress.row, decodedAddress.column);
-  if (cellValue === null || cellValue === undefined) {
-    return "";
-  }
-
-  if (cellValue instanceof Date) {
-    return sanitizeImportedText(cellValue.toLocaleDateString("de-DE"), 120);
-  }
-
-  return sanitizeImportedText(String(cellValue));
-}
-
-function readLabeledValue(sheet: ImportedSheetData, labelPattern: RegExp): string {
-  for (let row = 1; row <= 25; row += 1) {
-    const leftValue = readCellText(sheet, `A${row}`);
-    if (!labelPattern.test(leftValue)) {
-      continue;
-    }
-
-    const rightB = readCellText(sheet, `B${row}`);
-    const rightC = readCellText(sheet, `C${row}`);
-    return rightB || rightC;
-  }
-
-  return "";
-}
-
-function parseDurationCell(cell?: unknown): number | null {
-  if (cell === null || cell === undefined || cell === "") {
-    return null;
-  }
-
-  if (cell instanceof Date) {
-    return cell.getHours() * 3600 + cell.getMinutes() * 60 + cell.getSeconds();
-  }
-
-  if (typeof cell === "number") {
-    if (cell > 0 && cell < 1) {
-      return Math.round(cell * 24 * 60 * 60);
-    }
-
-    if (cell >= 1 && cell < 1000) {
-      return Math.round(cell * 60);
-    }
-  }
-
-  const valueText = String(cell).trim();
-  const clockMatch = valueText.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (clockMatch) {
-    const hours = Number(clockMatch[1]);
-    const minutes = Number(clockMatch[2]);
-    const seconds = Number(clockMatch[3] ?? "0");
-    return hours * 3600 + minutes * 60 + seconds;
-  }
-
-  const minutesMatch = valueText.match(/^(\d{1,4})\s*(m|min)$/i);
-  if (minutesMatch) {
-    return Number(minutesMatch[1]) * 60;
-  }
-
-  return null;
-}
 
 function parseDurationInput(value: string): number | null {
   const trimmed = value.trim();
@@ -542,149 +393,6 @@ function parseDurationInput(value: string): number | null {
   return null;
 }
 
-function parseDayLabel(dayCell: unknown, topValue: string): string {
-  if (dayCell !== null && dayCell !== undefined && String(dayCell).trim() !== "") {
-    if (typeof dayCell === "number") {
-      const dayFromNumber = Math.max(1, Math.round(dayCell));
-      return `Tag ${dayFromNumber}`;
-    }
-
-    const dayText = String(dayCell).trim();
-    const digitMatch = dayText.match(/(\d{1,2})/);
-    if (digitMatch) {
-      return `Tag ${digitMatch[1]}`;
-    }
-
-    if (/erst/i.test(dayText)) {
-      return "Tag 1";
-    }
-
-    if (/zweit/i.test(dayText)) {
-      return "Tag 2";
-    }
-  }
-
-  const topPrefix = topValue.split(".")[0]?.trim();
-  if (topPrefix && /^\d+$/.test(topPrefix)) {
-    return `Tag ${topPrefix}`;
-  }
-
-  return "Tag 1";
-}
-
-function findAgendaStartRow(sheet: ImportedSheetData): number {
-  for (let row = 1; row <= 40; row += 1) {
-    const leftValue = readCellText(sheet, `A${row}`).toLowerCase();
-    const titleValue = readCellText(sheet, `B${row}`).toLowerCase();
-    if (leftValue === "top" && titleValue.includes("titel")) {
-      return row + 1;
-    }
-  }
-
-  return 6;
-}
-
-function findFollowingDayLabel(sheet: ImportedSheetData, row: number): string | null {
-  for (let followingRow = row + 1; followingRow <= 600; followingRow += 1) {
-    const dayCell = getCellValue(sheet, followingRow, 4);
-    if (typeof dayCell === "number" || (typeof dayCell === "string" && /^\d+$/.test(dayCell.trim()))) {
-      return parseDayLabel(dayCell, readCellText(sheet, `A${followingRow}`));
-    }
-  }
-
-  return null;
-}
-
-function hasUnexpectedAgendaColumns(sheet: ImportedSheetData, row: number): boolean {
-  const rowValues = sheet[row - 1];
-  if (!Array.isArray(rowValues)) {
-    return false;
-  }
-
-  for (let columnIndex = 5; columnIndex < rowValues.length; columnIndex += 1) {
-    const value = rowValues[columnIndex];
-    if (value === null || value === undefined) {
-      continue;
-    }
-
-    if (String(value).trim() !== "") {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function buildImportedAgenda(sheet: ImportedSheetData): AgendaItem[] {
-  const imported: AgendaItem[] = [];
-  let blankStreak = 0;
-  const startRow = findAgendaStartRow(sheet);
-
-  for (let row = startRow; row <= 600; row += 1) {
-    const topValue = readCellText(sheet, `A${row}`);
-    const importedTitle = readCellText(sheet, `B${row}`);
-    const dayCell = getCellValue(sheet, row, 4);
-    const property = typeof dayCell === "string" ? dayCell.trim().toUpperCase() : "";
-    const kind: AgendaKind = property === "P" ? "break" : property === "U" ? "heading" : "topic";
-    const titleValue = kind === "break" ? importedTitle || "Pause" : importedTitle;
-
-    if (!topValue && !importedTitle && kind !== "break") {
-      blankStreak += 1;
-      if (blankStreak >= 20 && imported.length > 0) {
-        break;
-      }
-      continue;
-    }
-
-    blankStreak = 0;
-
-    if (!titleValue || (kind === "topic" && !topValue)) {
-      continue;
-    }
-
-    if (hasUnexpectedAgendaColumns(sheet, row)) {
-      throw new Error(`Unerwartete Daten in Spalten rechts von E (Zeile ${row}).`);
-    }
-
-    if (topValue.length > maxAgendaTopLength) {
-      throw new Error(`TOP-Nummer in Zeile ${row} ist zu lang (max. ${maxAgendaTopLength} Zeichen).`);
-    }
-
-    if (titleValue.length > maxAgendaTitleLength) {
-      throw new Error(`TOP-Titel in Zeile ${row} ist zu lang (max. ${maxAgendaTitleLength} Zeichen).`);
-    }
-
-    const durationSec =
-      kind === "heading"
-        ? 0
-        : (parseDurationCell(getCellValue(sheet, row, 3)) ?? (kind === "break" ? 5 : 15) * 60);
-    if (kind !== "heading" && (durationSec <= 0 || durationSec > maxImportDurationSec)) {
-      throw new Error(`Ungültige TOP-Dauer in Zeile ${row}.`);
-    }
-
-    const dayLabel = kind === "topic"
-      ? parseDayLabel(dayCell, topValue)
-      : kind === "heading"
-        ? findFollowingDayLabel(sheet, row) ?? imported[imported.length - 1]?.day ?? "Tag 1"
-        : imported[imported.length - 1]?.day ?? "Tag 1";
-
-    imported.push({
-      id: `import-${row}-${topValue.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`,
-      kind,
-      day: dayLabel,
-      order: imported.length + 1,
-      top: topValue,
-      title: titleValue,
-      plannedDurationSec: durationSec,
-      state: "planned",
-      actualStartedAtMs: null,
-      actualEndedAtMs: null,
-      actualPausedMsTotal: 0,
-    });
-  }
-
-  return imported;
-}
 
 function resolveTimerReferenceMs(options: {
   onAir: boolean;
@@ -925,6 +633,8 @@ function App() {
       .sort((left, right) => left.startedAtMs - right.startedAtMs);
   }, [agenda, currentItemId, isPaused, nowMs, pauseStartedAtMs]);
 
+  // Abgeschlossene Punkte zählen mit Ist-Dauer, offene mit Plan-Dauer. Die Live-Uhr darf
+  // künftige Startzeiten nicht sekündlich verschieben; erst ein Trigger setzt sie neu.
   const scheduleTiming = useMemo(() => {
     const startTimeByItemId = new Map<string, string>();
 
@@ -1012,6 +722,7 @@ function App() {
     setNowMs(Date.now());
   }, []);
 
+  // Das Operator-Fenster ist die einzige schreibende Quelle; die Beameransicht liest Snapshots.
   useEffect(() => {
     if (isExternalView) {
       return;
@@ -1364,6 +1075,7 @@ function App() {
         index > currentIndexInAgenda &&
         (nextIndex < 0 || index < nextIndex)
       ) {
+        // Überschriften sind sichtbar, verbrauchen aber weder Sendezeit noch einen Trigger.
         return { ...item, state: "done" as const };
       }
 
@@ -1422,6 +1134,7 @@ function App() {
       }
 
       if (item.kind === "heading" && item.state === "done" && index > previousDoneIndex && index < currentIndexInAgenda) {
+        // Beim Zurücktriggern werden übergangene Überschriften für den nächsten Vorlauf wieder offen.
         return { ...item, state: "planned" as const };
       }
 
@@ -1436,12 +1149,13 @@ function App() {
     setNowMs(timestamp);
   }, [agenda, currentItemId, isExternalView, isPaused, onAir]);
 
-  const startOnAir = useCallback(() => {
+  const handleOnAirClick = useCallback(() => {
     if (isExternalView) {
       return;
     }
 
     if (onAir) {
+      setIsStopConfirmOpen(true);
       return;
     }
 
@@ -1534,14 +1248,6 @@ function App() {
       );
     }
   }, [currentItemId, isExternalView, isPaused, onAir, pauseStartedAtMs]);
-
-  const stopSession = useCallback(() => {
-    if (isExternalView || (!onAir && !isPaused)) {
-      return;
-    }
-
-    setIsStopConfirmOpen(true);
-  }, [isExternalView, isPaused, onAir]);
 
   const cancelStopSession = useCallback(() => {
     setIsStopConfirmOpen(false);
@@ -2001,6 +1707,7 @@ function App() {
       }
 
       setMoveSelection((previous) => {
+        // Die erste Auswahl bleibt Anker; Umschalt-Klick erweitert sie zu einem lückenlosen Block.
         if (!withShift || !previous) {
           if (!withShift && previous?.itemIds.length === 1 && previous.itemIds[0] === itemId) {
             return null;
@@ -2757,8 +2464,10 @@ function App() {
             <button
               type="button"
               className={onAir ? "onAirButton active" : "onAirButton"}
-              onClick={startOnAir}
-              aria-label={onAir ? "OnAir aktiv" : "OnAir inaktiv"}
+              onClick={handleOnAirClick}
+              aria-label={onAir ? "Sitzung beenden" : "Sitzung starten"}
+              title={onAir ? "Sitzung beenden (mit Bestätigung)" : "Sitzung starten"}
+              aria-pressed={onAir}
             >
               On
               <br />
@@ -2766,28 +2475,16 @@ function App() {
             </button>
 
             {!isAudienceView ? (
-              <div className="miniSessionButtons">
-                <button
-                  type="button"
-                  className="miniSessionButton"
-                  onClick={togglePauseSession}
-                  disabled={!onAir}
-                  title={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
-                  aria-label={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
-                >
-                  {isPaused ? "▶" : "❚❚"}
-                </button>
-                <button
-                  type="button"
-                  className="miniSessionButton"
-                  onClick={stopSession}
-                  disabled={!onAir && !isPaused}
-                  title="Sitzung beenden"
-                  aria-label="Sitzung beenden"
-                >
-                  ■
-                </button>
-              </div>
+              <button
+                type="button"
+                className="miniSessionButton"
+                onClick={togglePauseSession}
+                disabled={!onAir}
+                title={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
+                aria-label={isPaused ? "Sitzung fortsetzen" : "Sitzung pausieren"}
+              >
+                {isPaused ? "▶" : "❚❚"}
+              </button>
             ) : null}
           </div>
 
@@ -3363,10 +3060,11 @@ function App() {
 
             <h4 className="helpSectionTitle">2) Session-Steuerung</h4>
             <p className="helpText">
-              <strong>OnAir</strong> startet bzw. setzt die Sitzung fort. <strong>Pause (❚❚/▶)</strong> hält alle Zeiten an;
-              währenddessen blinken Sitzungszeit und TOP-Zeit im Sekundentakt. <strong>Stop (■)</strong> öffnet einen
-              Sicherheitsdialog mit den Optionen <strong>Nein</strong>, <strong>Ja, ohne Speichern</strong> und
-              <strong>Ja + Speichern</strong>.
+              Ein Klick auf den grauen <strong>OnAir</strong>-Knopf startet die Sitzung. Ist OnAir bereits aktiv (rot),
+              öffnet ein erneuter Klick die Frage, ob die Sitzung beendet werden soll – mit den Optionen
+              <strong> Nein</strong>, <strong>Ja, ohne Speichern</strong> und <strong>Ja + Speichern</strong>.
+              <strong> Pause (❚❚/▶)</strong> hält alle Zeiten an; währenddessen blinken Sitzungszeit und TOP-Zeit im
+              Sekundentakt. Auch während einer Pause kannst du die Sitzung über OnAir beenden.
             </p>
 
             <h4 className="helpSectionTitle">3) Rechte Funktionsknöpfe</h4>
@@ -3460,8 +3158,8 @@ function App() {
 
             <h4 className="helpSectionTitle">10) Sitzung speichern und fortführen</h4>
             <p className="helpText">
-              Wenn du bei <strong>Stop</strong> "Ja + Speichern" wählst, wird der aktuelle Stand lokal gesichert. Beim nächsten
-              Start fragt die App automatisch, ob der letzte Stand fortgeführt werden soll.
+              Wenn du beim Beenden über <strong>OnAir</strong> „Ja + Speichern“ wählst, wird der aktuelle Stand lokal
+              gesichert. Beim nächsten Start fragt die App automatisch, ob der letzte Stand fortgeführt werden soll.
             </p>
 
             <div className="settingsActions">
