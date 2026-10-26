@@ -2,7 +2,7 @@
   "bundle": {
     "category": "Utility",
     "macOS": {
-      "bundleVersion": "1.2.0",
+      "bundleVersion": "1.2.1",
       "entitlements": "./Entitlements.appstore.plist",
       "files": {
         "embedded.provisionprofile": "./embedded.provisionprofile"

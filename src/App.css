@@ -40,6 +40,15 @@ p {
   grid-template-columns: minmax(250px, 340px) minmax(350px, 1fr);
 }
 
+.audienceMode .leftHeaderStack {
+  flex-direction: row;
+  gap: 0.6rem;
+}
+
+.audienceMode .dateArea {
+  text-align: left;
+}
+
 .freezeHeader {
   position: sticky;
   top: 0;

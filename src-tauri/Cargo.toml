@@ -1,6 +1,6 @@
 [package]
 name = "sitzungsbuddy"
-version = "1.2.0"
+version = "1.2.1"
 description = "Sitzungsbuddy desktop app"
 authors = ["Sitzungsbuddy Team"]
 edition = "2021"
