@@ -9,6 +9,7 @@ Desktop-App zur Live-Begleitung komplexer, mehrtägiger Sitzungen auf macOS und 
 - Plan-/Ist-Zeiten und voraussichtliches Sitzungsende anzeigen
 - Zukünftige Zeilen verschieben, als Block auswählen, auf Halt setzen oder bearbeiten
 - Reduzierte Beameransicht auf einem externen Monitor anzeigen
+- Schreibgeschützte LAN-Browseransicht mit kopierbarem Zugangslink bereitstellen
 - Sitzungsstand lokal sichern und ein AsRun-Log als PDF exportieren
 
 ## Tech-Stack
@@ -37,6 +38,12 @@ npm run tauri dev
 ```
 
 Hinweis: `tauri dev` räumt Port `1420` automatisch frei.
+
+## LAN-Ansicht
+
+In der Desktop-App startet **LAN starten** einen lokalen, schreibgeschützten Webdienst. **Link kopieren** legt den für diese Freigabe erzeugten Zugangslink in die Zwischenablage. Teilnehmende können ihn im Browser öffnen, sofern ihre Geräte die private IPv4-Adresse des Sitzungsrechners erreichen. Die App wählt einen freien Port; eine Firewall-Freigabe oder IT-Genehmigung kann erforderlich sein. WLAN-Client-Isolierung oder getrennte Netzwerkbereiche verhindern den Zugriff, ohne die lokale Sitzung zu beeinträchtigen.
+
+Der Link enthält einen zufälligen Zugangsschlüssel und wird beim Beenden der Freigabe ungültig. Die Verbindung nutzt lokales **HTTP ohne Verschlüsselung**; Link und Sitzungsdaten daher nur in dafür freigegebenen Netzen teilen. Die LAN-Ansicht überträgt keine Operator-Bedienelemente und bietet keine Schreibfunktion.
 
 ## Aufbau
 

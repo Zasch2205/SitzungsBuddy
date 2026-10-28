@@ -130,6 +130,53 @@ p {
   gap: 0.45rem;
 }
 
+.lanShareControls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.lanShareButton {
+  min-width: 7.1rem;
+  min-height: 3rem;
+  padding: 0.3rem 0.55rem;
+  border: 2px solid #0f1d2d;
+  border-radius: 0.65rem;
+  background: #d8e0ea;
+  color: #10263e;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.lanShareButton.active {
+  background: #1e6b3f;
+  color: #fff;
+}
+
+.lanShareButton.copy {
+  background: #dcebf8;
+}
+
+.lanShareButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lanShareButton:focus-visible {
+  outline: 3px solid #0f4d84;
+  outline-offset: 2px;
+}
+
+.lanShareMessage {
+  max-width: 13rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: #1b334d;
+  text-align: right;
+}
+
 .windowControls {
   display: flex;
   align-items: center;
@@ -273,7 +320,7 @@ p {
   text-overflow: ellipsis;
 }
 
-.audienceTimingRow {
+.headerTimingRow {
   width: 100%;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -281,7 +328,7 @@ p {
   gap: 0.75rem;
 }
 
-.audienceTimingBlock {
+.headerTimingBlock {
   display: grid;
   justify-items: stretch;
   align-content: start;
@@ -289,35 +336,51 @@ p {
   gap: 0.16rem;
 }
 
-.audienceCurrentTimeBlock {
-  justify-items: stretch;
-}
-
-.audienceCurrentTimeBlock .audienceFieldLabel {
-  text-align: center;
-}
-
-.audienceFieldLabel {
+.headerTimingLabel {
   font-size: 0.96rem;
   line-height: 1.1;
 }
 
-.audienceTopTimeBox {
+.headerTopTimeBox {
   width: 100%;
   min-width: 0;
   padding-inline: 1rem;
   justify-content: center;
 }
 
-.audienceCountdown {
-  width: 100%;
-  text-align: center;
-}
-
-.audienceInfoValue {
+.headerInfoValue {
   width: 100%;
   min-width: 0;
   font-size: clamp(1.2rem, 1.9vw, 1.9rem);
+}
+
+.headerSecondTimingLabel {
+  margin-top: 0.45rem;
+}
+
+.sessionStartButton,
+.sessionStartInput {
+  font-family: inherit;
+  color: #0f1d2d;
+}
+
+.sessionStartButton {
+  cursor: pointer;
+}
+
+.sessionStartButton:hover {
+  background: #edf4ff;
+}
+
+.sessionStartButton:focus-visible,
+.sessionStartInput:focus {
+  outline: 3px solid #0f4d84;
+  outline-offset: 2px;
+}
+
+.sessionStartInput {
+  display: block;
+  font-variant-numeric: tabular-nums;
 }
 
 .deltaValue {
@@ -1256,11 +1319,11 @@ p {
     font-size: 1.2rem;
   }
 
-  .audienceTimingRow {
+  .headerTimingRow {
     gap: 0.6rem;
   }
 
-  .audienceFieldLabel {
+  .headerTimingLabel {
     font-size: 0.9rem;
   }
 }

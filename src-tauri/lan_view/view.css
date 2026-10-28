@@ -1,0 +1,358 @@
+:root {
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+  color: #0f1d2d;
+  background: #8ef994;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  height: 100vh;
+  margin: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.header {
+  padding: 0.75rem 1.2rem 0.65rem;
+  background: linear-gradient(180deg, #56606f 0%, #eff3f9 100%);
+  border-bottom: 3px solid #4a5260;
+}
+
+.headerTop {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(0, 2fr) minmax(7rem, 1fr);
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.meetingMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.logo {
+  width: 7.1rem;
+  border-radius: 0.35rem;
+  box-shadow: 0 7px 14px rgb(0 0 0 / 18%);
+  filter: grayscale(0.55) saturate(0.5) hue-rotate(165deg) brightness(0.95) contrast(1.05);
+}
+
+.meetingPlace {
+  display: grid;
+  gap: 0.1rem;
+  font-weight: 700;
+}
+
+.meetingPlace span {
+  font-size: 0.95rem;
+}
+
+.meetingPlace strong {
+  font-size: 1.35rem;
+}
+
+.meetingHeading {
+  text-align: center;
+  min-width: 0;
+}
+
+.meetingHeading h1 {
+  font-size: clamp(2rem, 4.2vw, 3.8rem);
+  letter-spacing: 0.03em;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 45%);
+}
+
+.meetingHeading p {
+  color: #fff;
+  font-size: clamp(0.98rem, 1.62vw, 1.38rem);
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 35%);
+}
+
+.onAirStatus {
+  justify-self: end;
+  width: 6.5rem;
+  height: 6.5rem;
+  display: grid;
+  place-items: center;
+  border: 3px solid #0f1d2d;
+  border-radius: 1rem;
+  background: #7d8794;
+  color: #fff;
+  font-size: 1.8rem;
+  font-weight: 900;
+  text-align: center;
+  line-height: 0.95;
+}
+
+.onAirStatus.active {
+  background: #e20f27;
+}
+
+.divider {
+  margin: 0.45rem 0 0.62rem;
+  border-bottom: 3px solid #5a6373;
+}
+
+.statusLayout {
+  display: grid;
+  grid-template-columns: minmax(250px, 340px) minmax(350px, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.timeColumn,
+.topColumn,
+.timingBlock {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.fieldLabel {
+  font-size: 1.12rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.valueBox,
+.topBox {
+  border: 3px solid #0f1d2d;
+  border-radius: 0.8rem;
+  background: #fff;
+  padding: 0.25rem 0.8rem;
+  font-size: clamp(1.45rem, 2.8vw, 2.6rem);
+  font-weight: 800;
+  text-align: center;
+  min-height: 3.35rem;
+  display: grid;
+  place-items: center;
+}
+
+.topBox {
+  min-height: 3.85rem;
+  justify-items: start;
+  background: #ffeb4d;
+  color: #0f4d84;
+  font-size: clamp(1.35rem, 2.45vw, 2.45rem);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.timingRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.75rem;
+}
+
+.timingBlock {
+  gap: 0.16rem;
+}
+
+.timingLabel {
+  font-size: 0.96rem;
+  line-height: 1.1;
+}
+
+.secondLabel {
+  margin-top: 0.45rem;
+}
+
+.infoValue {
+  font-size: clamp(1.2rem, 1.9vw, 1.9rem);
+}
+
+.deltaValue {
+  min-height: 2.5rem;
+  margin-top: 0.1rem;
+  font-size: clamp(1.45rem, 2.8vw, 2.4rem);
+  font-weight: 900;
+  text-align: center;
+  color: #173049;
+}
+
+.deltaValue.green {
+  color: #1f7f2f;
+}
+
+.deltaValue.red {
+  color: #c2132a;
+}
+
+@keyframes pausedBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.35; }
+}
+
+.paused {
+  animation: pausedBlink 1s steps(1, end) infinite;
+}
+
+.agendaScroll {
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem 1.2rem 1.4rem;
+}
+
+.agendaCard {
+  min-height: 100%;
+  padding: 1rem 1.2rem;
+  border-radius: 1rem;
+  background: #effff2;
+}
+
+.agendaCard h2 {
+  font-size: 2.6rem;
+  margin-bottom: 0.55rem;
+}
+
+.agendaList {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agendaRow {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 3.45rem;
+  padding: 0.28rem 0.55rem;
+  border: 2px solid #cbdcf8;
+  border-radius: 0.75rem;
+  background: #fff;
+  font-size: clamp(1rem, 1.45vw, 1.55rem);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.agendaRow.break {
+  background: #ead5b2;
+  border-color: #ba9767;
+}
+
+.agendaRow.heading {
+  background: #eaf3ff;
+}
+
+.agendaRow.hold {
+  background: #fff1a8;
+}
+
+.agendaRow.next {
+  background: #78d890;
+  border-color: #348c53;
+  color: #0f1d2d;
+}
+
+.agendaRow.live {
+  background: #f26565;
+  border-color: #a63333;
+  color: #0f1d2d;
+}
+
+.agendaRow.finished {
+  background: #f1f3f6;
+  color: #748094;
+}
+
+.rowBadge {
+  flex: 0 0 auto;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #e9f1ff;
+  font-size: 0.68em;
+  font-weight: 800;
+}
+
+.rowMeta,
+.rowTime,
+.rowTop {
+  flex: 0 0 auto;
+}
+
+.rowTime {
+  font-weight: 700;
+}
+
+.rowTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 800;
+}
+
+.rowDuration {
+  margin-left: auto;
+  padding-left: 0.5rem;
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.connectionStatus {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  max-width: min(36rem, calc(100vw - 2rem));
+  padding: 0.7rem 1rem;
+  border: 2px solid #8e1f31;
+  border-radius: 0.65rem;
+  background: #fff2f3;
+  color: #7e1727;
+  font-weight: 700;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 16%);
+}
+
+.connectionStatus[hidden] {
+  display: none;
+}
+
+.connectionStatus.waiting {
+  border-color: #4a6682;
+  background: #eef4fa;
+  color: #1b334d;
+}
+
+@media (max-width: 950px) {
+  .headerTop {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .meetingHeading {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .statusLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .timeColumn {
+    display: none;
+  }
+
+  .agendaCard h2 {
+    font-size: 2rem;
+  }
+
+  .agendaRow {
+    font-size: 1rem;
+  }
+}

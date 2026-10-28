@@ -45,6 +45,40 @@ type AsRunFilter = "completed" | "all";
 type DropPosition = "before" | "after";
 type AgendaContextMenu = { itemId: string; x: number; y: number };
 type MoveSelection = { anchorId: string; itemIds: string[] };
+type LanViewRow = {
+  kind: AgendaKind;
+  state: AgendaState;
+  stateLabel: string;
+  order: number;
+  top: string;
+  title: string;
+  scheduledStart: string;
+  duration: string;
+  isCurrent: boolean;
+  isNext: boolean;
+};
+
+type LanViewSnapshot = {
+  meetingTitle: string;
+  meetingSubtitle: string;
+  meetingDate: string;
+  meetingLocation: string;
+  onAir: boolean;
+  isPaused: boolean;
+  currentClock: string;
+  sessionElapsed: string;
+  prognosis: string;
+  prognosisTone: "green" | "red" | "neutral";
+  currentTop: string;
+  topElapsed: string;
+  countdown: string;
+  countdownTone: "green" | "red" | "neutral";
+  sessionStart: string;
+  sessionEnd: string;
+  nextBreak: string;
+  hasRealAgenda: boolean;
+  rows: LanViewRow[];
+};
 
 const audienceViewQueryParam = "view";
 const audienceViewQueryValue = "audience";
@@ -305,6 +339,25 @@ function formatTimeOfDay(timestampMs: number): string {
   return new Date(timestampMs).toLocaleTimeString("de-DE", { hour12: false });
 }
 
+function parseSessionStartClock(value: string, originalTimestampMs: number): number | null {
+  const match = value.trim().match(/^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] ?? 0);
+  const updatedDate = new Date(originalTimestampMs);
+  updatedDate.setHours(hours, minutes, seconds, 0);
+
+  if (updatedDate.getHours() !== hours || updatedDate.getMinutes() !== minutes || updatedDate.getSeconds() !== seconds) {
+    return null;
+  }
+
+  return updatedDate.getTime();
+}
+
 function formatSignedDuration(seconds: number): string {
   if (seconds === 0) {
     return "± 00:00";
@@ -347,6 +400,14 @@ function stateLabel(state: AgendaState): string {
     default:
       return state;
   }
+}
+
+function shownAgendaDurationSec(item: AgendaItem): number {
+  if (item.state === "done" && item.actualStartedAtMs !== null && item.actualEndedAtMs !== null) {
+    return Math.max(0, Math.floor((item.actualEndedAtMs - item.actualStartedAtMs - item.actualPausedMsTotal) / 1000));
+  }
+
+  return item.state === "skipped" ? 0 : item.plannedDurationSec;
 }
 
 
@@ -477,11 +538,16 @@ function App() {
   const [editingDurationValue, setEditingDurationValue] = useState("");
   const [editingTitleItemId, setEditingTitleItemId] = useState<string | null>(null);
   const [editingTitleValue, setEditingTitleValue] = useState("");
+  const [editingSessionStart, setEditingSessionStart] = useState(false);
+  const [editingSessionStartValue, setEditingSessionStartValue] = useState("");
   const [savedSessionCandidate, setSavedSessionCandidate] = useState<PersistedSession | null>(null);
   const [moveSelection, setMoveSelection] = useState<MoveSelection | null>(null);
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<{ itemId: string; position: DropPosition } | null>(null);
   const [agendaContextMenu, setAgendaContextMenu] = useState<AgendaContextMenu | null>(null);
+  const [lanShareUrl, setLanShareUrl] = useState<string | null>(null);
+  const [lanShareBusy, setLanShareBusy] = useState(false);
+  const [lanShareMessage, setLanShareMessage] = useState("");
 
   const hasRealAgendaItems = useMemo(
     () => agenda.some(isPlayableAgendaItem),
@@ -710,6 +776,8 @@ function App() {
     setSessionStoppedAtMs(snapshot.sessionStoppedAtMs);
     setCurrentItemStoppedAtMs(snapshot.currentItemStoppedAtMs);
     setSessionStartedAt(snapshot.sessionStartedAt);
+    setEditingSessionStart(false);
+    setEditingSessionStartValue("");
     setCurrentItemId(snapshot.currentItemId);
     setCurrentItemStartedAt(snapshot.currentItemStartedAt);
     setMeetingTitle(snapshot.meetingTitle);
@@ -1459,6 +1527,8 @@ function App() {
     setSessionPausedMsTotal(0);
     setCurrentItemPausedMsTotal(0);
     setSessionStartedAt(null);
+    setEditingSessionStart(false);
+    setEditingSessionStartValue("");
     setSessionStoppedAtMs(null);
     setCurrentItemId(null);
     setCurrentItemStartedAt(null);
@@ -2151,6 +2221,77 @@ function App() {
     setEditingDurationValue(formatClock(item.plannedDurationSec));
   }, []);
 
+  const beginSessionStartEdit = useCallback(() => {
+    if (isAudienceView || sessionStartedAt === null) {
+      return;
+    }
+
+    setEditingSessionStartValue(formatTimeOfDay(sessionStartedAt));
+    setEditingSessionStart(true);
+  }, [isAudienceView, sessionStartedAt]);
+
+  const cancelSessionStartEdit = useCallback(() => {
+    setEditingSessionStart(false);
+    setEditingSessionStartValue("");
+  }, []);
+
+  const commitSessionStartEdit = useCallback(() => {
+    if (!editingSessionStart || sessionStartedAt === null) {
+      return;
+    }
+
+    const draft = editingSessionStartValue.trim();
+    if (draft === formatTimeOfDay(sessionStartedAt)) {
+      cancelSessionStartEdit();
+      return;
+    }
+
+    const updatedTimestamp = parseSessionStartClock(draft, sessionStartedAt);
+    if (updatedTimestamp === null) {
+      cancelSessionStartEdit();
+      window.alert("Diese Anfangsuhrzeit ist nicht erlaubt. Bitte HH:MM oder HH:MM:SS eingeben.");
+      return;
+    }
+
+    if (updatedTimestamp > Date.now()) {
+      cancelSessionStartEdit();
+      window.alert("Diese Anfangsuhrzeit ist nicht erlaubt: Sie liegt in der Zukunft.");
+      return;
+    }
+
+    const sessionReferenceMs = resolveTimerReferenceMs({
+      onAir,
+      isPaused,
+      pauseStartedAtMs,
+      stoppedAtMs: sessionStoppedAtMs,
+      nowMs: Date.now(),
+    });
+    if (updatedTimestamp > sessionReferenceMs) {
+      cancelSessionStartEdit();
+      window.alert("Diese Anfangsuhrzeit ist nicht erlaubt: Sie liegt nach dem bisherigen Sitzungsende.");
+      return;
+    }
+
+    setSessionStartedAt(updatedTimestamp);
+    cancelSessionStartEdit();
+  }, [cancelSessionStartEdit, editingSessionStart, editingSessionStartValue, isPaused, onAir, pauseStartedAtMs, sessionStartedAt, sessionStoppedAtMs]);
+
+  const handleSessionStartInputKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.currentTarget.blur();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelSessionStartEdit();
+      }
+    },
+    [cancelSessionStartEdit],
+  );
+
   const cancelDurationEdit = useCallback(() => {
     setEditingDurationItemId(null);
     setEditingDurationValue("");
@@ -2440,6 +2581,126 @@ function App() {
   }, [prognosisSec, sessionStartedAt]);
 
   const pausedValueBoxClass = isPaused ? "valueBox pausedBlink" : "valueBox";
+  const sessionStartLabel = sessionStartedAt === null ? "--:--:--" : formatTimeOfDay(sessionStartedAt);
+  const lanClockSecond = Math.floor(nowMs / 1000);
+
+  const lanSnapshot = useMemo<LanViewSnapshot | null>(() => {
+    if (!lanShareUrl || isExternalView || !isTauriRuntime) {
+      return null;
+    }
+
+    return {
+      meetingTitle,
+      meetingSubtitle,
+      meetingDate,
+      meetingLocation,
+      onAir,
+      isPaused,
+      currentClock: formatTimeOfDay(lanClockSecond * 1000),
+      sessionElapsed: formatClock(totalElapsedSec),
+      prognosis: prognosisLabel,
+      prognosisTone: prognosisClass === "deltaGreen" ? "green" : prognosisClass === "deltaRed" ? "red" : "neutral",
+      currentTop: currentTopLabel,
+      topElapsed: currentItem ? formatClock(currentElapsedSec) : "--:--:--",
+      countdown: countdownLabel,
+      countdownTone: countdownClass === "deltaGreen" ? "green" : countdownClass === "deltaRed" ? "red" : "neutral",
+      sessionStart: sessionStartLabel,
+      sessionEnd: scheduleTiming.sessionEndLabel,
+      nextBreak: nextPlannedBreakLabel,
+      hasRealAgenda: hasRealAgendaItems,
+      rows: agenda.map((item) => ({
+        kind: item.kind,
+        state: item.state,
+        stateLabel: stateLabel(item.state),
+        order: item.order,
+        top: item.top,
+        title: item.title,
+        scheduledStart: scheduleTiming.startTimeByItemId.get(item.id) ?? "--:--:--",
+        duration: isPlayableAgendaItem(item) ? formatClock(shownAgendaDurationSec(item)) : "",
+        isCurrent: item.id === currentItemId,
+        isNext: item.id === nextItemId,
+      })),
+    };
+  }, [
+    agenda,
+    countdownClass,
+    countdownLabel,
+    currentElapsedSec,
+    currentItem,
+    currentItemId,
+    currentTopLabel,
+    hasRealAgendaItems,
+    isExternalView,
+    isPaused,
+    isTauriRuntime,
+    lanClockSecond,
+    lanShareUrl,
+    meetingDate,
+    meetingLocation,
+    meetingSubtitle,
+    meetingTitle,
+    nextItemId,
+    nextPlannedBreakLabel,
+    onAir,
+    prognosisClass,
+    prognosisLabel,
+    scheduleTiming,
+    sessionStartLabel,
+    totalElapsedSec,
+  ]);
+
+  useEffect(() => {
+    if (!lanSnapshot) {
+      return;
+    }
+
+    let active = true;
+    void invoke("update_lan_view", { snapshot: lanSnapshot }).catch((error) => {
+      if (active) {
+        setLanShareMessage(`LAN-Ansicht konnte nicht aktualisiert werden: ${String(error)}`);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [lanSnapshot]);
+
+  const toggleLanShare = async () => {
+    if (lanShareBusy || !isTauriRuntime || isExternalView) {
+      return;
+    }
+
+    setLanShareBusy(true);
+    try {
+      if (lanShareUrl) {
+        await invoke("stop_lan_view");
+        setLanShareUrl(null);
+        setLanShareMessage("LAN-Freigabe beendet. Der bisherige Link ist ungültig.");
+      } else {
+        const url = await invoke<string>("start_lan_view");
+        setLanShareUrl(url);
+        setLanShareMessage("LAN-Ansicht aktiv. Erreichbarkeit hängt vom Firmennetz ab.");
+      }
+    } catch (error) {
+      setLanShareMessage(`LAN-Freigabe fehlgeschlagen: ${String(error)}`);
+    } finally {
+      setLanShareBusy(false);
+    }
+  };
+
+  const copyLanLink = async () => {
+    if (!lanShareUrl) {
+      return;
+    }
+
+    try {
+      await invoke("copy_lan_view_link");
+      setLanShareMessage("LAN-Link kopiert. Nur an berechtigte Teilnehmende weitergeben.");
+    } catch (error) {
+      setLanShareMessage(String(error));
+    }
+  };
 
   return (
     <main className={isAudienceView ? "appShell audienceMode" : "appShell"}>
@@ -2461,6 +2722,30 @@ function App() {
           </div>
 
           <div className="sessionControlGroup">
+            {!isAudienceView ? (
+              <div className="lanShareControls" role="group" aria-label="LAN-Browseransicht">
+                <button
+                  type="button"
+                  className={lanShareUrl ? "lanShareButton active" : "lanShareButton"}
+                  onClick={toggleLanShare}
+                  disabled={!isTauriRuntime || lanShareBusy}
+                  aria-pressed={lanShareUrl !== null}
+                  aria-label={lanShareUrl ? "LAN-Ansicht beenden" : "LAN-Ansicht starten"}
+                  title={lanShareUrl ? "LAN-Ansicht beenden" : "Schreibgeschützte LAN-Ansicht aktivieren"}
+                >
+                  {lanShareUrl ? "LAN beenden" : "LAN starten"}
+                </button>
+                <button
+                  type="button"
+                  className="lanShareButton copy"
+                  onClick={copyLanLink}
+                  disabled={!lanShareUrl || lanShareBusy}
+                  title="LAN-Link in die Zwischenablage kopieren"
+                >
+                  Link kopieren
+                </button>
+              </div>
+            ) : null}
             <button
               type="button"
               className={onAir ? "onAirButton active" : "onAirButton"}
@@ -2538,34 +2823,53 @@ function App() {
             <p className="fieldLabel">Aktueller TOP</p>
             <div className="topBox">{currentTopLabel}</div>
 
-            {isAudienceView ? (
-              <div className="audienceTimingRow">
-                <section className="audienceTimingBlock audienceCurrentTimeBlock">
-                  <p className="fieldLabel audienceFieldLabel">Zeit des TOP</p>
-                  <div className={`${pausedValueBoxClass} audienceTopTimeBox`}>
-                    {currentItem ? formatClock(currentElapsedSec) : "--:--:--"}
-                  </div>
-                  <p className={`deltaValue ${countdownClass} audienceCountdown`}>{countdownLabel}</p>
-                </section>
-
-                <section className="audienceTimingBlock audienceInfoBox">
-                  <p className="fieldLabel audienceFieldLabel">Geplantes Ende der Sitzung</p>
-                  <div className="valueBox audienceInfoValue">{scheduleTiming.sessionEndLabel}</div>
-                </section>
-
-                <section className="audienceTimingBlock audienceInfoBox">
-                  <p className="fieldLabel audienceFieldLabel">Geplante Pause</p>
-                  <div className="valueBox audienceInfoValue">{nextPlannedBreakLabel}</div>
-                </section>
-              </div>
-            ) : (
-              <>
-                <p className="fieldLabel">Zeit des TOP</p>
-                <div className={pausedValueBoxClass}>{currentItem ? formatClock(currentElapsedSec) : "--:--:--"}</div>
-
+            <div className="headerTimingRow">
+              <section className="headerTimingBlock">
+                <p className="fieldLabel headerTimingLabel">Zeit des TOP</p>
+                <div className={`${pausedValueBoxClass} headerTopTimeBox`}>
+                  {currentItem ? formatClock(currentElapsedSec) : "--:--:--"}
+                </div>
                 <p className={`deltaValue ${countdownClass}`}>{countdownLabel}</p>
-              </>
-            )}
+              </section>
+
+              <section className="headerTimingBlock">
+                <p className="fieldLabel headerTimingLabel">Sitzungsanfang</p>
+                {isAudienceView || sessionStartedAt === null ? (
+                  <div className="valueBox headerInfoValue">{sessionStartLabel}</div>
+                ) : editingSessionStart ? (
+                  <input
+                    className="valueBox headerInfoValue sessionStartInput"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={8}
+                    value={editingSessionStartValue}
+                    onChange={(event) => setEditingSessionStartValue(event.currentTarget.value)}
+                    onBlur={commitSessionStartEdit}
+                    onKeyDown={handleSessionStartInputKeyDown}
+                    onFocus={(event) => event.currentTarget.select()}
+                    autoFocus
+                    aria-label="Sitzungsanfang bearbeiten (HH:MM oder HH:MM:SS)"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="valueBox headerInfoValue sessionStartButton"
+                    onClick={beginSessionStartEdit}
+                    aria-label={`Sitzungsanfang ${sessionStartLabel} bearbeiten`}
+                    title="Klicken, um den Sitzungsanfang zu ändern"
+                  >
+                    {sessionStartLabel}
+                  </button>
+                )}
+                <p className="fieldLabel headerTimingLabel headerSecondTimingLabel">Geplantes Ende der Sitzung</p>
+                <div className="valueBox headerInfoValue">{scheduleTiming.sessionEndLabel}</div>
+              </section>
+
+              <section className="headerTimingBlock">
+                <p className="fieldLabel headerTimingLabel">Geplante Pause</p>
+                <div className="valueBox headerInfoValue">{nextPlannedBreakLabel}</div>
+              </section>
+            </div>
           </section>
 
           {!isAudienceView ? <aside className="actionColumn">
@@ -2653,6 +2957,7 @@ function App() {
               </div>
             </div>
             <p className="spaceHint">Leertaste = Nächster TOP · Strg+Leertaste = Zurück</p>
+            {lanShareMessage ? <p className="lanShareMessage" role="status">{lanShareMessage}</p> : null}
             {importInfo ? <p className="importHint">{importInfo}</p> : null}
           </aside> : null}
         </div>
@@ -2686,12 +2991,7 @@ function App() {
               const isEditableTitle = !isAudienceView && !isPlaceholderItem && (item.state === "planned" || item.state === "hold");
               const isEditingDuration = editingDurationItemId === item.id;
               const isEditingTitle = editingTitleItemId === item.id;
-              const shownDurationSec =
-                item.state === "done" && item.actualStartedAtMs !== null && item.actualEndedAtMs !== null
-                  ? Math.max(0, Math.floor((item.actualEndedAtMs - item.actualStartedAtMs - item.actualPausedMsTotal) / 1000))
-                  : item.state === "skipped"
-                    ? 0
-                    : item.plannedDurationSec;
+              const shownDurationSec = shownAgendaDurationSec(item);
               const isFuture = currentIndex < 0 || index > currentIndex;
               const canSetMoveMode =
                 !isAudienceView &&
@@ -3051,12 +3351,30 @@ function App() {
             <p className="helpText">
               Oben links stehen Datum und Ort. In der Mitte stehen Haupttitel und Untertitel der Sitzung (Untertitel kommt aus
               Excel-Zelle A4). Unter der Trennlinie zeigt die linke Seite aktuelle Uhrzeit, Sitzungszeit und Prognose. Rechts
-              siehst du den aktiven TOP, die laufende TOP-Zeit und den Countdown zur geplanten Dauer. Wenn ein externer
-              Monitor erkannt wird, öffnet sich dort automatisch eine reduzierte Beamer-Ansicht ohne Operator-Bedienelemente.
-              Diese Anzeige macht den aktuellen Sitzungsstand für alle Teilnehmenden transparent. In der Beamer-Ansicht siehst
-              du zusätzlich die Felder <strong>Geplantes Ende der Sitzung</strong> (berechnet aus Startzeit und Agenda) und
-              <strong> Geplante Pause</strong> (Uhrzeit der nächsten Pausenzeile); beide Werte werden bei Änderungen oder
-              Triggern automatisch aktualisiert.
+              siehst du den aktiven TOP, die laufende TOP-Zeit und den Countdown zur geplanten Dauer. Daneben stehen in
+              beiden Ansichten der <strong>Sitzungsanfang</strong>, darunter das <strong>geplante Ende der Sitzung</strong>
+              (berechnet aus Startzeit und Agenda) sowie die <strong>geplante Pause</strong> (Uhrzeit der nächsten Pausenzeile).
+              Diese Werte werden bei Änderungen oder Triggern automatisch aktualisiert. Wenn ein externer Monitor erkannt
+              wird, öffnet sich dort eine reduzierte Beamer-Ansicht ohne Operator-Bedienelemente. Sie macht den Sitzungsstand
+              für alle Teilnehmenden transparent.
+            </p>
+            <p className="helpText">
+              Das Feld <strong>Sitzungsanfang bearbeiten</strong> zeigt die Uhrzeit des ersten OnAir-Starts. In der
+              Hauptansicht klickst du auf die Uhrzeit und gibst eine neue Zeit als HH:MM oder HH:MM:SS ein. Mit
+              <strong> Enter</strong> oder einem Klick außerhalb des Feldes übernimmst du sie; mit
+              <strong> Escape</strong> verwirfst du die Eingabe. Ungültige Uhrzeiten, Zeiten in der Zukunft oder nach dem
+              bisherigen Sitzungsende werden mit einer Meldung abgelehnt; die vorherige Startzeit bleibt erhalten. Eine
+              gültige Änderung aktualisiert die Sitzungsdauer, die berechneten TOP-Uhrzeiten und das geplante Sitzungsende.
+              Die Beamer-Ansicht zeigt den geänderten Sitzungsanfang ebenfalls an, lässt ihn aber nicht bearbeiten.
+            </p>
+            <p className="helpText">
+              Mit <strong>LAN starten</strong> im Kopfbereich aktivierst du eine zusätzliche, schreibgeschützte Browseransicht.
+              <strong> Link kopieren</strong> kopiert den Zugangslink für berechtigte Personen im selben Netzwerk. Die
+              Browseransicht aktualisiert sich automatisch und hat keine Steuerknöpfe. Mit <strong>LAN beenden</strong>
+              schließt du die Freigabe; der alte Link funktioniert danach nicht mehr. Eine Firmen-Firewall oder getrennte
+              WLAN-Bereiche können den Zugriff verhindern, ohne die Sitzung in Sitzungsbuddy zu stören. Der Link ist ein
+              Zugangsschlüssel; die lokale HTTP-Verbindung ist nicht verschlüsselt. Vertrauliche Agenden nur nach Freigabe
+              durch eure IT teilen.
             </p>
 
             <h4 className="helpSectionTitle">2) Session-Steuerung</h4>
@@ -3140,7 +3458,7 @@ function App() {
               bei „Pause einfügen“. Der Text in B ist frei wählbar; bleibt B leer, heißt der Eintrag „Pause“. In C steht die
               geplante Länge in Minuten; ohne Angabe gelten fünf Minuten. Eine TOP-Nummer in A ist nicht nötig. Die Pause
               zählt bei der Berechnung des Sitzungsendes mit, kann wie ein normaler Eintrag getriggert werden und erscheint
-              in der Beameransicht als Uhrzeit der nächsten geplanten Pause.
+              im Kopfbereich beider Ansichten als Uhrzeit der nächsten geplanten Pause.
             </p>
             <p className="helpText">
               <strong>U = Überschrift:</strong> Steht in D ein U, wird die Zeile als hellblaue Abschnittsüberschrift

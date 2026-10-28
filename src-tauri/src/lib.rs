@@ -6,6 +6,8 @@ use std::{
 };
 use tauri::{Manager, RunEvent, WindowEvent};
 
+mod lan_view;
+
 #[cfg(target_os = "macos")]
 use std::process::{Child, Command};
 
@@ -116,20 +118,34 @@ fn set_on_air_mode(enabled: bool) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .manage(lan_view::LanViewManager::default())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, WindowEvent::CloseRequested { .. }) {
                 disable_sleep_blocker();
+                if let Some(manager) = window.app_handle().try_state::<lan_view::LanViewManager>() {
+                    let _ = manager.stop();
+                }
                 close_beamer_windows(window.app_handle());
             }
         })
-        .invoke_handler(tauri::generate_handler![save_pdf_file, set_on_air_mode])
+        .invoke_handler(tauri::generate_handler![
+            save_pdf_file,
+            set_on_air_mode,
+            lan_view::start_lan_view,
+            lan_view::stop_lan_view,
+            lan_view::update_lan_view,
+            lan_view::copy_lan_view_link
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit) {
             disable_sleep_blocker();
+            if let Some(manager) = app_handle.try_state::<lan_view::LanViewManager>() {
+                let _ = manager.stop();
+            }
             close_beamer_windows(app_handle);
         }
     });

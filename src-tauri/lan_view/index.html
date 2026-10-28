@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sitzungsbuddy – LAN-Ansicht</title>
+    <link rel="stylesheet" href="view.css" />
+    <script src="view.js" defer></script>
+  </head>
+  <body>
+    <header class="header">
+      <div class="headerTop">
+        <div class="meetingMeta">
+          <img class="logo" src="logo.png" alt="Sitzungsbuddy" />
+          <div class="meetingPlace">
+            <span id="meetingDate"></span>
+            <strong id="meetingLocation"></strong>
+          </div>
+        </div>
+        <div class="meetingHeading">
+          <h1 id="meetingTitle"></h1>
+          <p id="meetingSubtitle"></p>
+        </div>
+        <div id="onAirStatus" class="onAirStatus">Off Air</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="statusLayout">
+        <section class="timeColumn" aria-label="Sitzungszeit">
+          <p class="fieldLabel">Aktuelle Uhrzeit</p>
+          <div id="currentClock" class="valueBox">--:--:--</div>
+          <p class="fieldLabel">Sitzungszeit</p>
+          <div id="sessionElapsed" class="valueBox">00:00:00</div>
+          <p id="prognosis" class="deltaValue">0</p>
+        </section>
+
+        <section class="topColumn" aria-label="Aktueller Tagesordnungspunkt">
+          <p class="fieldLabel">Aktueller TOP</p>
+          <div id="currentTop" class="topBox">Kein aktiver TOP</div>
+          <div class="timingRow">
+            <section class="timingBlock">
+              <p class="fieldLabel timingLabel">Zeit des TOP</p>
+              <div id="topElapsed" class="valueBox">--:--:--</div>
+              <p id="countdown" class="deltaValue">--:--</p>
+            </section>
+            <section class="timingBlock">
+              <p class="fieldLabel timingLabel">Sitzungsanfang</p>
+              <div id="sessionStart" class="valueBox infoValue">--:--:--</div>
+              <p class="fieldLabel timingLabel secondLabel">Geplantes Ende der Sitzung</p>
+              <div id="sessionEnd" class="valueBox infoValue">--:--:--</div>
+            </section>
+            <section class="timingBlock">
+              <p class="fieldLabel timingLabel">Geplante Pause</p>
+              <div id="nextBreak" class="valueBox infoValue">--:--:--</div>
+            </section>
+          </div>
+        </section>
+      </div>
+    </header>
+
+    <main id="agendaScroll" class="agendaScroll">
+      <section class="agendaCard" aria-label="Agenda">
+        <h2>Agenda</h2>
+        <ul id="agendaList" class="agendaList"></ul>
+      </section>
+    </main>
+    <div id="connectionStatus" class="connectionStatus" role="status">Verbindung wird aufgebaut …</div>
+  </body>
+</html>
